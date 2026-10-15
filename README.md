@@ -15,8 +15,6 @@ Este projeto foi idealizado e desenvolvido por **Fabio Castro** com o objetivo d
 🔗 **Conecte-se comigo no LinkedIn:**  
 👉 [linkedin.com/in/fabio-castro-943649286](https://www.linkedin.com/in/fabio-castro-943649286/?isSelfProfile=true)
 
-Fique à vontade para mandar feedback, ideias de melhorias ou trocar experiências sobre e-commerce e desenvolvimento de software!
-
 ---
 
 ## ✨ Principais Funcionalidades
