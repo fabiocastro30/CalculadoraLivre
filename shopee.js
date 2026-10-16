@@ -444,20 +444,26 @@
   // =========================================================================
   class ShopeeDomFallbackExtractor {
     static fromDocument() {
-      const title = document.querySelector("h1, .qaNIZv, [class*='title'], [class*='product-title']")?.textContent?.trim() || document.title;
+      const title = document.querySelector("h1.auau1S, h1, .qaNIZv, [class*='title'], [class*='product-title']")?.textContent?.trim() || document.title;
 
       // Extract current live price from the DOM briefing
       let price = 0;
       let originalPrice = null;
       let discountText = "";
 
-      // Shopee price elements: usually contains R$ and digits in the briefing
+      // Shopee price elements: modern layout (.nt0EaI, .pyzxvq.pw3J3G) + legacy selectors
       const priceSelectors = [
+        ".nt0EaI .pyzxvq.pw3J3G",
+        ".nt0EaI .pyzxvq",
+        ".pyzxvq.pw3J3G",
+        ".pyzxvq",
+        ".flex.flex-column.AP_iE1 .pyzxvq",
+        "section[aria-live='polite'] .pyzxvq",
         ".product-briefing [class*='flex-column'] [class*='items-center']",
         ".product-briefing div[class*='price']",
         ".page-product div[class*='price']",
         "div[class*='flex-column'] div[class*='items-center']",
-        "[class*='G27w2Q']", // common Shopee price class patterns
+        "[class*='G27w2Q']",
         "[class*='Y3DfxN']",
         "[class*='_0Z3Idn']"
       ];
@@ -479,10 +485,20 @@
 
       // If price still not found, search all text nodes with R$ in the briefing
       if (price === 0) {
-        const briefing = document.querySelector(".product-briefing, [class*='product-briefing'], .page-product");
+        const briefing = document.querySelector(".xvTkTc, .SQguX_, .product-briefing, [class*='product-briefing'], .page-product");
         if (briefing) {
           const match = briefing.innerText.match(/R\$\s*([\d\.]+,\d{2})/);
           if (match) price = parseBrlPrice(match[0]);
+        }
+      }
+
+      // Alternate price / price without coupon
+      const altPriceEl = document.querySelector(".zmROP0, [class*='zmROP0']");
+      if (altPriceEl) {
+        const matchAlt = altPriceEl.textContent?.match(/ou\s+R\$\s*([\d\.]+,\d{2})/i) || altPriceEl.textContent?.match(/R\$\s*([\d\.]+,\d{2})/);
+        if (matchAlt) {
+          const parsedAlt = parseBrlPrice(matchAlt[0]);
+          if (parsedAlt > price) originalPrice = parsedAlt;
         }
       }
 
@@ -494,31 +510,62 @@
       }
 
       // Discount tag
-      const discountEl = document.querySelector(".product-briefing [class*='discount'], .product-briefing [class*='badge']");
+      const discountEl = document.querySelector(".product-briefing [class*='discount'], .product-briefing [class*='badge'], [class*='discount-badge']");
       if (discountEl && /%\s*(?:OFF)?/i.test(discountEl.textContent || "")) {
         discountText = discountEl.textContent.trim();
       }
 
-      // Sold count from DOM
+      // Sold count from DOM (Modern Shopee .PfWbfd / .Ocv3B8 / .zrnbj5 + legacy fallback)
       let soldDisplay = "";
       let soldQuantity = 0;
       let soldIsLowerBound = false;
-      const allTextElements = document.querySelectorAll(".product-briefing span, .product-briefing div");
-      for (const el of allTextElements) {
-        const t = el.textContent?.trim() || "";
-        if (/(?:vendido|vendidos)/i.test(t) && !t.includes("avaliar")) {
-          const parsed = parseShopeeSoldCount(t);
-          if (parsed.count > 0 || parsed.display) {
+
+      // 1. Direct modern selector
+      const soldSpan = document.querySelector(".PfWbfd, .Ocv3B8, [class*='PfWbfd'], [class*='Ocv3B8']");
+      if (soldSpan) {
+        const parsed = parseShopeeSoldCount(soldSpan.textContent?.trim() || "");
+        if (parsed.count > 0 || parsed.display) {
+          soldDisplay = parsed.display;
+          soldQuantity = parsed.count;
+          soldIsLowerBound = parsed.isLowerBound;
+        }
+      }
+
+      // 2. Scan briefing elements for "vendido" / "vendidos"
+      if (soldQuantity === 0) {
+        const searchScope = document.querySelectorAll(".xvTkTc span, .xvTkTc div, .SQguX_ span, .SQguX_ div, .product-briefing span, .product-briefing div, .zrnbj5, [class*='zrnbj5']");
+        for (const el of searchScope) {
+          const t = el.textContent?.trim() || "";
+          if (/(?:vendido|vendidos)/i.test(t) && !t.includes("avaliar")) {
+            const parsed = parseShopeeSoldCount(t);
+            if (parsed.count > 0 || parsed.display) {
+              soldDisplay = parsed.display;
+              soldQuantity = parsed.count;
+              soldIsLowerBound = parsed.isLowerBound;
+              break;
+            }
+          }
+        }
+      }
+
+      // 3. Regex on briefing innerHTML
+      if (soldQuantity === 0) {
+        const briefingEl = document.querySelector(".xvTkTc, .SQguX_, .product-briefing");
+        if (briefingEl) {
+          const matchSold = briefingEl.innerHTML.match(/<span[^>]*class="[^"]*PfWbfd[^"]*"[^>]*>([^<]+)<\/span>\s*Vendidos/i) ||
+                            briefingEl.innerText.match(/([\d,\.]+\s*(?:mil|k)?\+?)\s*Vendidos/i);
+          if (matchSold) {
+            const parsed = parseShopeeSoldCount(matchSold[1]);
             soldDisplay = parsed.display;
             soldQuantity = parsed.count;
             soldIsLowerBound = parsed.isLowerBound;
-            break;
           }
         }
       }
 
       // Stock from DOM
       let stock = 0;
+      const allTextElements = document.querySelectorAll(".xvTkTc span, .xvTkTc div, .product-briefing span, .product-briefing div");
       for (const el of allTextElements) {
         const t = el.textContent?.trim() || "";
         const stockMatch = t.match(/(\d+)\s*(?:peças disponíveis|itens disponíveis|disponíveis)/i);
@@ -531,31 +578,58 @@
       // Rating from DOM
       let ratingStar = 0;
       let ratingCount = 0;
-      const ratingEl = document.querySelector(".product-briefing [class*='rating'], .product-briefing [class*='stars']");
-      if (ratingEl) {
-        const starMatch = ratingEl.textContent?.match(/(\d\.\d)/);
-        if (starMatch) ratingStar = parseFloat(starMatch[1]);
-        const countMatch = ratingEl.textContent?.match(/(\d+[\d\.,]*)\s*(?:avaliações|avaliação)/i);
-        if (countMatch) ratingCount = parseInt(countMatch[1].replace(/\./g, ""), 10);
+      const modernRating = document.querySelector(".FllsTu.JXtSdn.bv0Mz_, .FllsTu.bv0Mz_, .uLEz5u .FllsTu");
+      if (modernRating) {
+        const parsedStar = parseFloat(modernRating.textContent?.trim() || "0");
+        if (parsedStar > 0) ratingStar = parsedStar;
+      }
+      if (ratingStar === 0) {
+        const ratingEl = document.querySelector(".product-briefing [class*='rating'], .product-briefing [class*='stars']");
+        if (ratingEl) {
+          const starMatch = ratingEl.textContent?.match(/(\d\.\d)/);
+          if (starMatch) ratingStar = parseFloat(starMatch[1]);
+        }
+      }
+
+      // Reviews count from DOM
+      const revElements = document.querySelectorAll("button.k_fvNr, .uLEz5u button, .product-briefing [class*='rating']");
+      for (const btn of revElements) {
+        if (/avaliaç/i.test(btn.textContent || "")) {
+          const numEl = btn.querySelector(".FllsTu") || btn;
+          const matchNum = numEl.textContent?.match(/(\d+[\d\.,]*)/);
+          if (matchNum) {
+            ratingCount = parseInt(matchNum[1].replace(/\./g, ""), 10);
+            break;
+          }
+        }
       }
 
       // Shop info from DOM
       let shopName = "";
       let shopLocation = "";
-      let shopIsOfficial = false;
+      let shopIsOfficial = Boolean(document.querySelector("img.ZZO5kF[alt*='mall'], img[alt*='mall'], .kG0FxG img[alt*='mall']"));
+
       const shopCard = document.querySelector("[class*='shop-info'], [class*='shop-header'], .page-product__shop");
       if (shopCard) {
         shopName = shopCard.querySelector("h1, [class*='shop-name'], a[href*='/shop/']")?.textContent?.trim() || "";
-        shopIsOfficial = Boolean(shopCard.querySelector("[class*='official'], [class*='mall'], [class*='preferred']"));
+        if (!shopIsOfficial) {
+          shopIsOfficial = Boolean(shopCard.querySelector("[class*='official'], [class*='mall'], [class*='preferred']"));
+        }
         const locMatch = shopCard.innerText.match(/(?:enviar de|localização|de)\s*:\s*([^\n\r]+)/i);
         if (locMatch) shopLocation = locMatch[1].trim();
       }
 
+      // Location from PDP shipping section (e.g. "Ferraz de Vasconcelos, São Paulo")
+      if (!shopLocation) {
+        const locEl = document.querySelector(".AzJBIW .lrcnAZ, .JCTCWp + .lrcnAZ, .dtIfxg");
+        if (locEl) shopLocation = locEl.textContent?.trim() || "";
+      }
+
       // Vouchers / Coupons
       const coupons = [];
-      document.querySelectorAll("[class*='voucher-ticket'], [class*='voucher-item'], [class*='shop-voucher']").forEach((v) => {
+      document.querySelectorAll("[class*='voucher-ticket'], [class*='voucher-item'], [class*='shop-voucher'], .u_3JMT p").forEach((v) => {
         const ct = v.textContent?.trim();
-        if (ct && ct.length < 40) coupons.push(ct);
+        if (ct && ct.length < 40 && !coupons.includes(ct)) coupons.push(ct);
       });
 
       return {
@@ -641,6 +715,12 @@
 
     findBriefingContainer() {
       const candidates = [
+        "div.flex-auto.flex-column.xvTkTc",
+        "div.xvTkTc",
+        "section.flex.flex-auto.SQguX_",
+        "section.SQguX_",
+        ".SQguX_",
+        ".xvTkTc",
         ".product-briefing",
         "[class*='product-briefing']",
         ".page-product__detail",
@@ -654,9 +734,61 @@
       return null;
     }
 
+    findPriceContainer(briefing) {
+      const container = briefing || document;
+      const candidates = [
+        container.querySelector("div[style*='margin-top'] .flex.flex-column.AP_iE1")?.closest("div[style*='margin-top']"),
+        container.querySelector(".flex.flex-column.AP_iE1")?.closest("div[style*='margin-top']"),
+        container.querySelector(".flex.flex-column.AP_iE1"),
+        container.querySelector("section[aria-live='polite']")?.closest("div[style*='margin-top']"),
+        container.querySelector("section[aria-live='polite']"),
+        container.querySelector(".nt0EaI")?.closest(".AP_iE1")?.parentElement,
+        container.querySelector(".nt0EaI"),
+        container.querySelector(".product-briefing [class*='flex-column'] [class*='items-center']"),
+        container.querySelector(".product-briefing div[class*='price']"),
+        container.querySelector("div[class*='price-box'], div[class*='price-wrapper']"),
+        document.querySelector("div[style*='margin-top'] .AP_iE1")?.parentElement,
+        document.querySelector(".AP_iE1")
+      ];
+      return candidates.find(Boolean) || null;
+    }
+
+    expandAnnouncementContainer(briefing) {
+      try {
+        const containers = [
+          briefing,
+          document.querySelector("section.SQguX_"),
+          document.querySelector("div.xvTkTc"),
+          document.querySelector(".page-product"),
+          document.querySelector(".page-product__detail"),
+          document.querySelector(".product-briefing")
+        ].filter(Boolean);
+
+        containers.forEach((el) => {
+          el.style.setProperty("height", "auto", "important");
+          el.style.setProperty("min-height", "auto", "important");
+          el.style.setProperty("max-height", "none", "important");
+          el.style.setProperty("overflow", "visible", "important");
+        });
+
+        const rightCol = document.querySelector("div.xvTkTc") || (briefing?.classList?.contains("xvTkTc") ? briefing : briefing?.querySelector?.(".xvTkTc"));
+        if (rightCol) {
+          rightCol.style.setProperty("flex", "1 1 auto", "important");
+          rightCol.style.setProperty("width", "auto", "important");
+          rightCol.style.setProperty("max-width", "100%", "important");
+        }
+
+        const outerSection = document.querySelector("section.SQguX_");
+        if (outerSection) {
+          outerSection.style.setProperty("align-items", "flex-start", "important");
+        }
+      } catch {
+        // Safe fallback
+      }
+    }
+
     findPurchaseSection(briefing) {
       const container = briefing || document;
-      // Look for the actions area (add to cart, buy now, quantity selector)
       const actionCandidates = [
         container.querySelector("[class*='purchase-section']"),
         container.querySelector("[class*='item-quantity']"),
@@ -667,15 +799,29 @@
     }
 
     placeAnalysis(root, briefing) {
-      const purchaseSection = this.findPurchaseSection(briefing);
-      const editingField = root.contains(document.activeElement);
+      this.expandAnnouncementContainer(briefing);
 
-      if (purchaseSection && purchaseSection !== briefing && !editingField) {
+      const editingField = root.contains(document.activeElement);
+      if (editingField) return;
+
+      const priceContainer = this.findPriceContainer(briefing);
+      if (priceContainer) {
+        if (root.previousElementSibling !== priceContainer) {
+          priceContainer.insertAdjacentElement("afterend", root);
+        }
+        return;
+      }
+
+      const purchaseSection = this.findPurchaseSection(briefing);
+      if (purchaseSection && purchaseSection !== briefing) {
         if (root.nextElementSibling !== purchaseSection) {
           purchaseSection.before(root);
         }
-      } else if (!editingField && briefing) {
-        const targetCol = briefing.querySelector("[class*='flex-column']") || briefing;
+        return;
+      }
+
+      if (briefing) {
+        const targetCol = briefing.querySelector("[class*='xvTkTc']") || briefing.querySelector("[class*='flex-column']") || briefing;
         if (!targetCol.contains(root)) {
           targetCol.appendChild(root);
         }
@@ -683,29 +829,9 @@
     }
 
     mountPricePayout() {
-      if (!this.data?.price) return;
-      const calc = ShopeePricingEngine.calculate(this.input(this.data));
-
-      // Find the main price display block in the briefing
-      const priceBox = document.querySelector(
-        ".product-briefing [class*='flex-column'] [class*='items-center'], .product-briefing div[class*='price']"
-      );
-      if (!priceBox) return;
-
-      let payoutEl = document.querySelector("#cl-shopee-price-payout");
-      if (!payoutEl) {
-        payoutEl = document.createElement("div");
-        payoutEl.id = "cl-shopee-price-payout";
-        payoutEl.className = "cl-shopee-price-payout";
-        priceBox.insertAdjacentElement("afterend", payoutEl);
-      }
-
-      const payoutHtml = `
-        <span class="cl-shopee-payout-title">Você recebe da Shopee (estimado)</span>
-        <strong class="cl-shopee-payout-value">${money.format(calc.netPayout)}</strong>
-        <small class="cl-shopee-payout-note">${number.format(calc.netPayoutPercent)}% do valor · Após comissão (${number.format(calc.commissionPercent)}%${calc.isCapped ? " - teto R$ 105" : ""}) e taxa fixa (${money.format(calc.fixedFee)}).</small>
-      `;
-      if (payoutEl.innerHTML !== payoutHtml) payoutEl.innerHTML = payoutHtml;
+      // Clean up standalone payout banner when full panel is positioned below the sales price
+      const payoutEl = document.querySelector("#cl-shopee-price-payout");
+      if (payoutEl) payoutEl.remove();
     }
 
     mount() {
@@ -811,8 +937,19 @@
             <span class="cl-shopee-brand-badge">SHOPEE</span>
             <h2>Calculadora Livre</h2>
           </div>
-          <p class="cl-shopee-header__subtitle">Análise financeira deste anúncio</p>
+          <p class="cl-shopee-header__subtitle">Análise financeira e resumo do anúncio</p>
         </header>
+
+        <div class="cl-shopee-payout-banner">
+          <div class="cl-shopee-payout-banner__main">
+            <div class="cl-shopee-payout-banner__col">
+              <span class="cl-shopee-payout-banner__label">Você recebe da Shopee (estimado)</span>
+              <span class="cl-shopee-payout-banner__percent">${number.format(calc.netPayoutPercent)}% do valor</span>
+            </div>
+            <strong class="cl-shopee-payout-banner__value">${money.format(calc.netPayout)}</strong>
+          </div>
+          <small class="cl-shopee-payout-banner__note">Após comissão (${number.format(calc.commissionPercent)}%${calc.isCapped ? " · Teto R$ 105 atingido" : ""}) e taxa fixa (${money.format(calc.fixedFee)}).</small>
+        </div>
 
         <div class="cl-shopee-badges">
           <span class="cl-shopee-badge cl-shopee-badge--orange">
