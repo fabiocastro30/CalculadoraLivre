@@ -579,6 +579,8 @@
 
     static fromSearchCard(card) {
       const titleLink = card.querySelector("a.poly-component__title, a.ui-search-link, a[href*='/MLB-']");
+      const img = card.querySelector(".poly-card__portada img, .ui-search-result-image__element, img.poly-component__picture, img");
+      const thumbnail = img?.getAttribute("src") || img?.getAttribute("data-src") || "";
       const installment = card.querySelector(".poly-price__installments, .ui-search-price__second-line")?.textContent ?? "";
       const fullNode = card.querySelector('svg use[href="#poly_full"], .poly-component__shipped-from, .ui-search-item__shipping');
       const moneyNodes = [...card.querySelectorAll(".andes-money-amount")];
@@ -602,6 +604,7 @@
         hasDeepData: false,
         title: titleLink?.textContent?.trim() ?? "Produto sem título",
         permalink: titleLink?.href ?? "", identifiers,
+        thumbnail,
         price: this.parseMoney(current), originalPrice: this.parseMoney(original),
         listingTypeId: /sem\s+juros/i.test(installment) || /rgb\(0,\s*166,\s*80\)|#00a650/i.test(card.querySelector(".poly-price__installments")?.getAttribute("style") ?? "") ? "gold_pro" : "gold_special",
         logisticType: fullNode ? "fulfillment" : "", isFull: Boolean(fullNode), isSponsored: /patrocinado/i.test(text) || Boolean(card.querySelector('[aria-label="Patrocinado"], .poly-component__ads-promotions')),
@@ -1533,15 +1536,18 @@
       const top5 = top5Items.map((it, idx) => {
         const rev = it.advanced.monthlyRevenue ?? 0;
         const share = (rev / totalRevenue) * 100;
+        const thumb = it.data.thumbnail || it.card?.querySelector(".poly-card__portada img, .ui-search-result-image__element, img")?.getAttribute("src") || "";
         return {
           rank: idx + 1,
           title: it.data.title || "Anúncio do Mercado Livre",
           price: it.data.price,
           permalink: it.data.permalink,
+          thumbnail: thumb,
           salesPerDay: it.advanced.salesPerDay ?? 0,
           monthlyRevenue: rev,
           share,
           isSponsored: Boolean(it.data.isSponsored),
+          isFull: Boolean(it.data.isFull || it.data.logisticType === "fulfillment"),
           logisticType: it.data.logisticType,
           listingTypeId: it.data.listingTypeId
         };
@@ -1584,6 +1590,7 @@
         const tMedian = ticketMedians[tierId] || 1;
         const mult = it.advanced.salesPerDay / tMedian;
         const isEstimated = Boolean(it.advanced.creationDateIsEstimated);
+        const thumb = it.data.thumbnail || it.card?.querySelector(".poly-card__portada img, .ui-search-result-image__element, img")?.getAttribute("src") || "";
 
         let status = "Giro em linha com a mediana";
         let isUnconfirmed = false;
@@ -1599,12 +1606,15 @@
         return {
           title: it.data.title || "Anúncio recente",
           permalink: it.data.permalink,
+          thumbnail: thumb,
           price: it.data.price,
           daysActive: it.advanced.estimatedDaysActive,
           creationDate: it.advanced.creationDate,
           isEstimatedDate: isEstimated,
           salesPerDay: it.advanced.salesPerDay,
           monthlyRevenue: it.advanced.monthlyRevenue,
+          isFull: Boolean(it.data.isFull || it.data.logisticType === "fulfillment"),
+          logisticType: it.data.logisticType,
           tierId,
           multiplier: mult,
           status,
@@ -1718,7 +1728,7 @@
       this.cards = null;
       this.settings = null;
       this.iqvAnalysis = null;
-      this.activeTab = "demand";
+      this.activeTab = "pricing";
       this.selectedSegment = "all";
       this.priceGrouping = "10";
       this.priceMetric = "efficiency";
@@ -1738,6 +1748,15 @@
       this.boundKeyHandler = (e) => {
         if (e.key === "Escape") this.close();
       };
+    }
+
+    formatMeliPrice(price) {
+      const val = asNumber(price, 0);
+      const integerPart = Math.floor(val);
+      const centsPart = Math.round((val - integerPart) * 100);
+      const fractionStr = integerPart.toLocaleString("pt-BR");
+      const centsStr = centsPart.toString().padStart(2, "0");
+      return `<span class="cl-ml-price"><span class="cl-ml-price__symbol">R$</span><span class="cl-ml-price__fraction">${fractionStr}</span><span class="cl-ml-price__cents">${centsStr}</span></span>`;
     }
 
     static getInstance() {
@@ -1855,8 +1874,8 @@
           </div>
 
           <nav class="cl-intel-tabs" role="tablist">
-            <button type="button" class="cl-intel-tab ${this.activeTab === 'demand' ? 'is-active' : ''}" data-intel-tab="demand">📊 Visão de Mercado</button>
             <button type="button" class="cl-intel-tab ${this.activeTab === 'pricing' ? 'is-active' : ''}" data-intel-tab="pricing">🏷️ Preços e Tickets</button>
+            <button type="button" class="cl-intel-tab ${this.activeTab === 'demand' ? 'is-active' : ''}" data-intel-tab="demand">📊 Visão de Mercado</button>
             <button type="button" class="cl-intel-tab ${this.activeTab === 'competition' ? 'is-active' : ''}" data-intel-tab="competition">🏆 Concorrência</button>
             <button type="button" class="cl-intel-tab ${this.activeTab === 'entrants' ? 'is-active' : ''}" data-intel-tab="entrants">🚀 Novos Entrantes</button>
             <button type="button" class="cl-intel-tab ${this.activeTab === 'simulator' ? 'is-active' : ''}" data-intel-tab="simulator">🧮 Simulador</button>
@@ -1868,7 +1887,7 @@
 
           <footer class="cl-intel-modal__footer">
             <span>Fonte dos dados: processamento local de anúncios visíveis na pesquisa do Mercado Livre. Sem chamadas externas.</span>
-            <span>CalcuLivre v1.14.0 • Projeto Gratuito por <a href="https://www.linkedin.com/in/fabio-castro-943649286/?isSelfProfile=true" target="_blank" style="color: #3483fa; text-decoration: none; font-weight: 700;">Fabio Castro</a></span>
+            <span>CalcuLivre v1.15.0 • Projeto Gratuito por <a href="https://www.linkedin.com/in/fabio-castro-943649286/?isSelfProfile=true" target="_blank" style="color: #3483fa; text-decoration: none; font-weight: 700;">Fabio Castro</a></span>
           </footer>
         </div>
       `;
@@ -2105,6 +2124,59 @@
     renderCompetitionTab(items) {
       const comp = MarketIntelligenceEngine.calculateCompetition(items);
 
+      const top5CardsHtml = comp.top5.length ? `
+        <div class="cl-ml-cards-grid">
+          ${comp.top5.map((ad) => {
+            const imgHtml = ad.thumbnail
+              ? `<img class="cl-ml-card__img" src="${escapeHtml(ad.thumbnail)}" alt="${escapeHtml(ad.title)}" loading="lazy" />`
+              : `<div style="font-size: 40px; color: #cbd5e1;">📦</div>`;
+            return `
+              <div class="cl-ml-card">
+                <div class="cl-ml-card__portada">
+                  <span class="cl-ml-card__badge-top" style="background: #3483fa; color: #ffffff;">#${ad.rank} Líder • ${ad.share.toFixed(1)}%</span>
+                  ${imgHtml}
+                </div>
+                <div class="cl-ml-card__body">
+                  <div>
+                    <h4 class="cl-ml-card__title" title="${escapeHtml(ad.title)}">
+                      <a href="${escapeHtml(ad.permalink)}" target="_blank">${escapeHtml(ad.title)}</a>
+                    </h4>
+                    <div style="margin-top: 6px;">
+                      ${this.formatMeliPrice(ad.price)}
+                    </div>
+                    <div class="cl-ml-card__tags" style="margin-top: 6px;">
+                      ${ad.isFull ? '<span class="cl-ml-tag-full">⚡ FULL</span>' : ''}
+                      ${ad.price >= 79 ? '<span class="cl-ml-tag-shipping">Frete grátis</span>' : ''}
+                      <span class="cl-badge ${ad.listingTypeId === 'gold_pro' ? 'cl-badge--blue' : ''}">${ad.listingTypeId === 'gold_pro' ? 'Premium' : 'Clássico'}</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="cl-ml-card__intel">
+                      <div class="cl-ml-card__intel-row">
+                        <dt>Giro diário</dt>
+                        <dd style="color: #00a650;">${number.format(ad.salesPerDay)} un./dia</dd>
+                      </div>
+                      <div class="cl-ml-card__intel-row">
+                        <dt>Faturamento mês</dt>
+                        <dd>${money.format(ad.monthlyRevenue)}</dd>
+                      </div>
+                      <div class="cl-ml-card__intel-row">
+                        <dt>Share na busca</dt>
+                        <dd style="color: #3483fa;">${ad.share.toFixed(1)}%</dd>
+                      </div>
+                    </div>
+                    <a class="cl-ml-card__btn" href="${escapeHtml(ad.permalink)}" target="_blank">
+                      Ver no Mercado Livre ↗
+                    </a>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      ` : `<div class="cl-intel-card" style="text-align: center; color: #666666; padding: 24px;">Dados de faturamento insuficientes para listar concorrentes.</div>`;
+
       const top5RowsHtml = comp.top5.map((ad) => `<tr>
         <td><strong style="color: #3483fa;">#${ad.rank}</strong></td>
         <td style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -2174,9 +2246,14 @@
           </div>
         </div>
 
-        <div class="cl-intel-card" style="padding: 0; overflow: hidden;">
-          <div style="padding: 14px 16px; border-bottom: 1px solid #e2e8f0;">
-            <div class="cl-intel-section-title" style="margin: 0;">Top 5 Anúncios com Maior Faturamento da Pesquisa</div>
+        <div class="cl-intel-section-title" style="margin-top: 20px;">
+          <span>Vitrine dos Líderes de Mercado (Top 5 Anúncios)</span>
+        </div>
+        ${top5CardsHtml}
+
+        <div class="cl-intel-card" style="padding: 0; overflow: hidden; margin-top: 16px;">
+          <div style="padding: 14px 16px; border-bottom: 1px solid rgba(0, 0, 0, 0.08);">
+            <div class="cl-intel-section-title" style="margin: 0;">Comparativo Estruturado dos Líderes</div>
           </div>
           <div class="cl-intel-table-wrap" style="border: 0; border-radius: 0;">
             <table class="cl-intel-table">
@@ -2211,37 +2288,65 @@
       const entrants = MarketIntelligenceEngine.calculateNewEntrants(items, ticketMedians);
 
       const cardsHtml = entrants.topEntrants.length
-        ? entrants.topEntrants.map((ad) => `
-          <div class="cl-intel-card" style="display: flex; flex-direction: column; justify-content: space-between; gap: 10px;">
-            <div>
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
-                <span class="cl-intel-badge-pro" style="background: ${ad.isUnconfirmed ? '#fee2e2; color:#991b1b;' : (ad.multiplier >= 2 ? '#bbf7d0; color:#166534;' : '#e0e7ff; color:#3730a3;')};">
-                  ${ad.isUnconfirmed ? '⚠️ ' + ad.status : '🔥 ' + ad.multiplier.toFixed(1) + 'x da mediana do ticket'}
-                </span>
-                <span style="font-size: 11px; color: #64748b;">${ad.daysActive} dias (${ad.isEstimatedDate ? 'Data aproximada' : 'Data confirmada'})</span>
-              </div>
-              <h4 style="margin: 0; font-size: 13px; font-weight: 700; line-height: 1.35;">
-                <a href="${escapeHtml(ad.permalink)}" target="_blank" style="color: #1e293b; text-decoration: none;">${escapeHtml(ad.title)}</a>
-              </h4>
-            </div>
+        ? `
+          <div class="cl-ml-cards-grid">
+            ${entrants.topEntrants.map((ad) => {
+              const imgHtml = ad.thumbnail
+                ? `<img class="cl-ml-card__img" src="${escapeHtml(ad.thumbnail)}" alt="${escapeHtml(ad.title)}" loading="lazy" />`
+                : `<div style="font-size: 40px; color: #cbd5e1;">📦</div>`;
+              const badgeBg = ad.isUnconfirmed ? '#e11d48' : (ad.multiplier >= 2 ? '#00a650' : '#3483fa');
+              const badgeText = ad.isUnconfirmed ? '⚠️ Giro extremo' : (ad.multiplier >= 2 ? `🔥 ${ad.multiplier.toFixed(1)}x mediana` : `🚀 ${ad.multiplier.toFixed(1)}x mediana`);
+              return `
+                <div class="cl-ml-card">
+                  <div class="cl-ml-card__portada">
+                    <span class="cl-ml-card__badge-top" style="background: ${badgeBg}; color: #ffffff;">${badgeText}</span>
+                    ${imgHtml}
+                  </div>
+                  <div class="cl-ml-card__body">
+                    <div>
+                      <h4 class="cl-ml-card__title" title="${escapeHtml(ad.title)}">
+                        <a href="${escapeHtml(ad.permalink)}" target="_blank">${escapeHtml(ad.title)}</a>
+                      </h4>
+                      <div style="margin-top: 6px;">
+                        ${this.formatMeliPrice(ad.price)}
+                      </div>
+                      <div class="cl-ml-card__tags" style="margin-top: 6px;">
+                        ${ad.isFull ? '<span class="cl-ml-tag-full">⚡ FULL</span>' : ''}
+                        ${ad.price >= 79 ? '<span class="cl-ml-tag-shipping">Frete grátis</span>' : ''}
+                        <span style="font-size: 11px; color: #666666;">${ad.daysActive} dias ativos</span>
+                      </div>
+                    </div>
 
-            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; border-top: 1px solid #f1f5f9; padding-top: 8px; margin-top: 4px;">
-              <div>
-                <span style="font-size: 10.5px; color: #64748b; display: block;">Preço</span>
-                <strong style="font-size: 14px; color: #0f172a;">${money.format(ad.price)}</strong>
-              </div>
-              <div>
-                <span style="font-size: 10.5px; color: #64748b; display: block;">Giro estimado</span>
-                <strong style="font-size: 14px; color: #059669;">${number.format(ad.salesPerDay)} un./dia</strong>
-              </div>
-              <div>
-                <span style="font-size: 10.5px; color: #64748b; display: block;">Faturamento projetado</span>
-                <strong style="font-size: 14px; color: #1e293b;">${money.format(ad.monthlyRevenue)}</strong>
-              </div>
-            </div>
+                    <div>
+                      <div class="cl-ml-card__intel">
+                        <div class="cl-ml-card__intel-row">
+                          <dt>Idade</dt>
+                          <dd>${ad.daysActive} dias (${ad.isEstimatedDate ? 'aprox.' : 'conf.'})</dd>
+                        </div>
+                        <div class="cl-ml-card__intel-row">
+                          <dt>Giro diário</dt>
+                          <dd style="color: #00a650;">${number.format(ad.salesPerDay)} un./dia</dd>
+                        </div>
+                        <div class="cl-ml-card__intel-row">
+                          <dt>Fat. mensal</dt>
+                          <dd>${money.format(ad.monthlyRevenue)}</dd>
+                        </div>
+                        <div class="cl-ml-card__intel-row">
+                          <dt>Status</dt>
+                          <dd style="font-size: 10.5px;">${escapeHtml(ad.status)}</dd>
+                        </div>
+                      </div>
+                      <a class="cl-ml-card__btn" href="${escapeHtml(ad.permalink)}" target="_blank">
+                        Ver no Mercado Livre ↗
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join("")}
           </div>
-        `).join("")
-        : `<div class="cl-intel-card" style="grid-column: 1 / -1; text-align: center; color: #64748b; padding: 24px;">
+        `
+        : `<div class="cl-intel-card" style="text-align: center; color: #666666; padding: 24px;">
             Nenhum anúncio com até 90 dias e vendas registradas foi encontrado nesta seleção.
           </div>`;
 
@@ -2265,12 +2370,10 @@
         </div>
 
         <div class="cl-intel-section-title">
-          <span>Novos Entrantes com Sinais de Alto Giro (Top Anúncios Recentes)</span>
+          <span>Novos Entrantes com Sinais de Alto Giro (Vitrine de Recentes)</span>
         </div>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px;">
-          ${cardsHtml}
-        </div>
+        ${cardsHtml}
       `;
     }
 

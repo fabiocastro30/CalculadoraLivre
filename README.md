@@ -62,11 +62,11 @@ Apresentado imediatamente acima dos filtros na barra lateral de buscas, o IQV co
 3. **Retorno Líquido Promocional (Peso 25%):** Mediana da margem de repasse líquido sobre o preço após comissões e frete ($SR = 100 \times \text{clamp}((R - 0.50) / 0.35, 0, 1)$).
 
 ### 5. 🚀 CalcuLivre Intelligence (Fase 1 — Painel Pro Expandido)
-Ao clicar no botão **"Ver detalhes da inteligência (Painel Pro)"**, abre-se um modal completo no padrão estético nativo do Mercado Livre, composto por 5 sub-módulos integrados com filtro global por segmento de ticket:
-- **📊 Visão de Mercado (Radar de Demanda):** Giro diário agregado, faturamento mensal projetado da amostra, giro mediano, percentis $P25, P50, P75$ e distribuição de velocidade de vendas;
-- **🏷️ Preços e Tickets (Faixas Mais Eficientes):** Segmentação de preços em faixas de R$ 10, R$ 20 ou automática, ranqueando as faixas pelo Índice de Eficiência com gráficos comparativos e tabela completa;
-- **🏆 Concorrência (Concentração de Concorrentes):** Concentração dos 5 maiores anúncios ($C5$), dos 10 maiores ($C10$) e Índice Herfindahl-Hirschman ($HHI$), com tabela detalhada dos líderes de faturamento;
-- **🚀 Novos Entrantes (Sinais de Alto Giro):** Detector de anúncios com até 90 dias de atividade que já vendem acima da mediana do ticket, com distinção rigorosa de datas confirmadas vs aproximadas para evitar falsos positivos;
+Ao clicar no botão **"Ver detalhes da inteligência (Painel Pro)"**, abre-se um modal profissional completo concebido na identidade visual nativa do Mercado Livre (Andes UI), abrindo diretamente na aba prioritária de precificação com 5 sub-módulos integrados e filtro global por ticket:
+- **🏷️ Preços e Tickets (Faixas Mais Eficientes — Aba Inicial):** Segmentação de preços em faixas de R$ 10, R$ 20 ou automática, ranqueando as faixas pelo Índice de Eficiência comercial, giro mediano e repasse percentual com gráficos comparativos e tabela completa;
+- **📊 Visão de Mercado (Radar de Demanda):** Giro diário agregado, faturamento mensal projetado da amostra, giro mediano, percentis $P25, P50, P75$ e curva de velocidade de vendas;
+- **🏆 Concorrência (Concentração de Concorrentes & Vitrine de Líderes):** Vitrine com **cards nativos realistas do Mercado Livre** (foto, preço fracionado, tags Full/Frete Grátis e badges de inteligência) dos 5 maiores líderes de faturamento, além dos índices de concentração ($C5$, $C10$) e Herfindahl-Hirschman ($HHI$);
+- **🚀 Novos Entrantes (Sinais de Alto Giro & Vitrine de Recentes):** Vitrine visual de cards com fotos e métricas para anúncios com até 90 dias que já superam a mediana do segmento, com validação de datas confirmadas vs aproximadas;
 - **🧮 Simulador de Entrada no Mercado:** Simulação operacional em tempo real onde o vendedor insere preço e custo para calcular repasse, sobra operacional, margem real, meta de lucro, **preço mínimo viável** (respeitando degraus de frete) e **custo máximo de aquisição** em 3 cenários de mercado (Conservador P25, Referência P50, Expansivo P75).
 
 ---
