@@ -374,16 +374,20 @@
           const estimatedDaysActive = creationDate ? Math.max(1, Math.ceil((Date.now() - creationDate.valueOf()) / 86400000)) : 0;
           const salesPerDay = estimatedDaysActive ? soldQuantity / estimatedDaysActive : 0;
           const price = asNumber(priceValue);
+          const domainId = nearest(/"domain_id"\s*:\s*"([^"]+)"/g, 1500) ?? "";
+          const categoryId = nearest(/"category_id"\s*:\s*"([^"]+)"/g, 1500) ?? "";
+          const categoryName = nearest(/"category_name"\s*:\s*"([^"]+)"/g, 1500) ?? "";
+          const brand = nearest(/"brand"\s*:\s*"([^"]+)"/g, 1500) ?? "";
           records.push({
             identifiers, title, price, soldQuantity, creationDate,
             creationDateIsEstimated: !explicitCreationDate,
             estimatedDaysActive, salesPerDay, salesPerMonth: salesPerDay * 30,
             monthlyRevenue: salesPerDay * 30 * price,
             advancedSource: explicitCreationDate ? "structured" : "picture-date",
-            domainId: "",
-            categoryId: "",
-            categoryName: "",
-            brand: "",
+            domainId,
+            categoryId,
+            categoryName,
+            brand,
             dataQuality: explicitCreationDate ? "complete" : "estimated"
           });
         }
@@ -470,6 +474,80 @@
       };
     }
 
+    static collectCatalogMetadata(root) {
+      if (!root || typeof root !== "object") return [];
+      const queue = [root];
+      const seen = new WeakSet();
+      const items = [];
+      let visited = 0, cursor = 0;
+      while (cursor < queue.length && visited < 120_000) {
+        const value = queue[cursor++];
+        if (!value || typeof value !== "object" || seen.has(value)) continue;
+        seen.add(value); visited += 1;
+
+        const eventData = value.event_data && typeof value.event_data === "object" ? value.event_data : value;
+        const domainId = eventData.domain_id ?? value.domain_id ?? value.domainId ?? "";
+        const categoryId = eventData.category_id ?? value.category_id ?? value.categoryId ?? "";
+        const categoryName = value.category_name ?? eventData.category_name ?? "";
+        const brand = eventData.brand ?? value.brand ?? value.components?.header?.brand?.text ?? "";
+
+        if (domainId || categoryId || categoryName || brand) {
+          const identifierValues = [value.id, value.item_id, value.itemId, value.pid, value.pid_extended, value.user_product_id, value.permalink, value.url, eventData.id, eventData.item_id, eventData.user_product_id];
+          const identifiers = this.extractIdentifiers(identifierValues);
+          const title = eventData.title ?? value.title ?? value.components?.header?.title?.text ?? value.schema?.[0]?.name ?? "";
+          if (identifiers.length || title) {
+            items.push({
+              identifiers,
+              title,
+              domainId,
+              categoryId,
+              categoryName,
+              brand
+            });
+          }
+        }
+
+        for (const child of Object.values(value)) {
+          if (child && typeof child === "object") queue.push(child);
+        }
+      }
+      return items;
+    }
+
+    static collectCatalogMetadataFromText(text) {
+      const items = [];
+      if (!text || typeof text !== "string") return items;
+      for (const payload of this.decodedTransportPayloads(text)) {
+        const pattern1 = /"(?:id|item_id)"\s*:\s*"(MLB\d+)"[^{}]{0,500}?"(?:domain_id|category_id)"\s*:\s*"([^"]+)"/g;
+        let m1;
+        while ((m1 = pattern1.exec(payload))) {
+          const isDomain = m1[0].includes("domain_id");
+          items.push({
+            identifiers: [m1[1]],
+            title: "",
+            domainId: isDomain ? m1[2] : "",
+            categoryId: !isDomain ? m1[2] : "",
+            categoryName: "",
+            brand: ""
+          });
+        }
+        const pattern2 = /"(?:domain_id|category_id)"\s*:\s*"([^"]+)"[^{}]{0,500}?"(?:id|item_id)"\s*:\s*"(MLB\d+)"/g;
+        let m2;
+        while ((m2 = pattern2.exec(payload))) {
+          const isDomain = m2[0].includes("domain_id");
+          items.push({
+            identifiers: [m2[2]],
+            title: "",
+            domainId: isDomain ? m2[1] : "",
+            categoryId: !isDomain ? m2[1] : "",
+            categoryName: "",
+            brand: ""
+          });
+        }
+      }
+      return items;
+    }
+
     static fromDocument(documentNode = document) {
       const script = documentNode.querySelector("#__NORDIC_RENDERING_CTX__");
       return this.normalize(this.parseScriptText(script?.textContent ?? ""));
@@ -477,7 +555,12 @@
 
     static fromText(text) {
       const parsed = this.parseScriptText(text);
-      return { root: parsed, pdp: this.normalize(parsed), searchRecords: [...this.collectSearchRecords(parsed), ...this.collectSearchRecordsFromText(text)] };
+      return {
+        root: parsed,
+        pdp: this.normalize(parsed),
+        searchRecords: [...this.collectSearchRecords(parsed), ...this.collectSearchRecordsFromText(text)],
+        catalogItems: [...this.collectCatalogMetadata(parsed), ...this.collectCatalogMetadataFromText(text)]
+      };
     }
 
     static fromHtml(html) {
@@ -503,10 +586,10 @@
   class CategoryIntelligenceExtractor {
     static DOMAIN_NAMES = {
       "MLB-COLLECTIBLE_CARD_GAMES": "Cartas Colecionáveis (TCG)",
-      "MLB-ACTION_FIGURES": "Figuras de Ação",
+      "MLB-ACTION_FIGURES": "Bonecos e Figuras de Ação",
       "MLB-PLUSH_TOYS": "Pelúcias",
       "MLB-BOARD_GAMES": "Jogos de Tabuleiro",
-      "MLB-SMARTWATCHES": "Smartwatches",
+      "MLB-SMARTWATCHES": "Smartwatches e Pulseiras",
       "MLB-WRISTWATCHES": "Relógios de Pulso",
       "MLB-HEADPHONES": "Fones de Ouvido",
       "MLB-CELLPHONES": "Celulares e Smartphones",
@@ -523,16 +606,192 @@
       "MLB-BEAUTY_AND_PERSONAL_CARE": "Beleza e Cuidado Pessoal",
       "MLB-AUTO_PARTS": "Peças Automotivas",
       "MLB-TOOLS": "Ferramentas",
-      "MLB-LAMPS": "Lâmpadas e Iluminação"
+      "MLB-LAMPS": "Lâmpadas e Iluminação",
+      "MLB-ALBUMS": "Álbuns e Figurinhas",
+      "MLB-BUILDING_SETS": "Brinquedos de Montar",
+      "MLB-FIDGET_TOYS": "Anti-stress e Engenho"
     };
 
     static normalizeDomainName(domainId, fallback = "") {
       if (!domainId) return fallback || "Geral";
-      const upper = String(domainId).toUpperCase().trim();
-      if (this.DOMAIN_NAMES[upper]) return this.DOMAIN_NAMES[upper];
-      const cleaned = upper.replace(/^ML[A-Z]-/, "").replace(/_/g, " ").toLowerCase();
+      const raw = String(domainId).toUpperCase().trim();
+      const withPrefix = raw.startsWith("MLB-") ? raw : `MLB-${raw}`;
+      const withoutPrefix = raw.replace(/^ML[A-Z]-/, "");
+      if (this.DOMAIN_NAMES[withPrefix]) return this.DOMAIN_NAMES[withPrefix];
+      if (this.DOMAIN_NAMES[raw]) return this.DOMAIN_NAMES[raw];
+      if (this.DOMAIN_NAMES[withoutPrefix]) return this.DOMAIN_NAMES[withoutPrefix];
+      const cleaned = withoutPrefix.replace(/_/g, " ").toLowerCase();
       if (!cleaned) return fallback || "Geral";
       return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+    }
+
+    static getCategoryKeywords(categoryName) {
+      if (!categoryName) return [];
+      const lower = categoryName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const keywords = [lower];
+
+      lower.split(/\s+/).forEach((w) => {
+        if (w.length >= 4 && !["para", "com", "sem", "sobre", "jogos"].includes(w)) {
+          keywords.push(w);
+          if (w.endsWith("s")) keywords.push(w.slice(0, -1));
+        }
+      });
+
+      if (lower.includes("cartas") || lower.includes("tabuleiro") || lower.includes("jogos")) {
+        keywords.push("carta", "cartas", "cartinhas", "tcg", "booster", "blister", "deck", "baralho", "tabuleiro", "copag", "monopoly");
+      }
+      if (lower.includes("boneco") || lower.includes("figura") || lower.includes("boneca")) {
+        keywords.push("boneco", "boneca", "bonecos", "bonecas", "action figure", "figure", "miniatura", "miniaturas", "pokebola", "pokébola", "pokeball", "funko", "pop", "articulado", "takara tomy");
+      }
+      if (lower.includes("pelucia")) {
+        keywords.push("pelucia", "pelúcia", "pelucias", "pelúcias", "plush", "pantufa");
+      }
+      if (lower.includes("album") || lower.includes("figurinha")) {
+        keywords.push("album", "álbum", "albuns", "álbuns", "figurinha", "figurinhas", "fichario", "fichário");
+      }
+      if (lower.includes("montar")) {
+        keywords.push("montar", "lego", "bloco", "blocos", "nanoblock");
+      }
+      if (lower.includes("anti-stress") || lower.includes("engenho")) {
+        keywords.push("stress", "fidget", "spinner", "cubo magico", "cubo mágico", "pop it");
+      }
+      if (lower.includes("celular") || lower.includes("smartphone")) {
+        keywords.push("celular", "celulares", "smartphone", "smartphones", "iphone", "galaxy", "xiaomi", "motorola");
+      }
+      if (lower.includes("relogio") || lower.includes("smartwatch")) {
+        keywords.push("smartwatch", "relogio", "relógio", "pulseira", "smart band");
+      }
+      if (lower.includes("tenis") || lower.includes("calcado")) {
+        keywords.push("tenis", "tênis", "calcado", "calçado", "sapato", "sneaker", "chuteira");
+      }
+      if (lower.includes("fone") || lower.includes("audio")) {
+        keywords.push("fone", "fones", "headphone", "headset", "earbuds", "airpods");
+      }
+      if (lower.includes("roupa") || lower.includes("camiseta") || lower.includes("camisa")) {
+        keywords.push("camisa", "camiseta", "blusa", "casaco", "jaqueta", "calca", "calça", "vestido");
+      }
+
+      return [...new Set(keywords)];
+    }
+
+    static classifyByTaxonomy(text) {
+      if (!text) return null;
+      const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const taxonomies = [
+        { key: "MLB-COLLECTIBLE_CARD_GAMES", name: "Cartas Colecionáveis (TCG)", match: /\b(tcg|cartas?|cartinhas?|boosters?|blisters?|decks?|baralhos?|copag)\b/ },
+        { key: "MLB-PLUSH_TOYS", name: "Pelúcias", match: /\b(pelucias?|plush)\b/ },
+        { key: "MLB-ACTION_FIGURES", name: "Bonecos e Figuras de Ação", match: /\b(action figure|figures?|bonecos?|bonecas?|miniaturas?|pokebolas?|pokeballs?|funko|funkos?)\b/ },
+        { key: "MLB-BOARD_GAMES", name: "Jogos de Tabuleiro", match: /\b(tabuleiro|board games?|monopoly|war|banco imobiliario)\b/ },
+        { key: "MLB-ALBUMS", name: "Álbuns e Figurinhas", match: /\b(albuns?|figurinhas?|ficharios?)\b/ },
+        { key: "MLB-SMARTWATCHES", name: "Smartwatches e Pulseiras", match: /\b(smartwatch(es)?|relogio inteligente|smart band|pulseira inteligente)\b/ },
+        { key: "MLB-HEADPHONES", name: "Fones de Ouvido", match: /\b(fones? de ouvido|headphones?|headsets?|earbuds?|airpods?)\b/ },
+        { key: "MLB-CELLPHONES", name: "Celulares e Smartphones", match: /\b(smartphones?|celulares?|iphone|galaxy|redmi|poco)\b/ },
+        { key: "MLB-SNEAKERS", name: "Tênis e Calçados", match: /\b(tenis|sneakers?|sapatos?|sandalias?|chuteiras?)\b/ },
+        { key: "MLB-VIDEO_GAMES", name: "Videogames e Consoles", match: /\b(nintendo switch|playstation|ps4|ps5|xbox|jogos? ps|jogos? switch)\b/ }
+      ];
+
+      for (const tax of taxonomies) {
+        if (tax.match.test(lower)) {
+          return {
+            key: tax.key,
+            domainId: tax.key,
+            categoryId: "",
+            name: tax.name
+          };
+        }
+      }
+      return null;
+    }
+
+    static classifyItemCategory(it, searchContext) {
+      const data = it?.data || {};
+      const adv = it?.advanced || {};
+
+      // 1. Explicit domainId
+      const domainId = adv.domainId || data.domainId || "";
+      if (domainId) {
+        return {
+          key: domainId,
+          domainId,
+          categoryId: adv.categoryId || data.categoryId || "",
+          name: this.normalizeDomainName(domainId)
+        };
+      }
+
+      // 2. Explicit categoryName (if not generic)
+      const categoryName = adv.categoryName || data.categoryName || "";
+      if (categoryName && !/^(geral|outros|principal)/i.test(categoryName.trim())) {
+        return {
+          key: categoryName,
+          domainId: "",
+          categoryId: adv.categoryId || data.categoryId || "",
+          name: categoryName
+        };
+      }
+
+      // 3. Explicit categoryId matching official filters
+      const catFilters = searchContext?.filters?.find((f) => /categor/i.test(f.name))?.values || [];
+      const categoryId = adv.categoryId || data.categoryId || "";
+      if (categoryId) {
+        const matchedFilter = catFilters.find((v) => (v.id && v.id === categoryId) || (v.applied_value_id && v.applied_value_id === categoryId));
+        if (matchedFilter?.name) {
+          return {
+            key: matchedFilter.name,
+            domainId: "",
+            categoryId,
+            name: matchedFilter.name
+          };
+        }
+        const normalized = this.normalizeDomainName(categoryId, "");
+        if (normalized && normalized !== "Geral") {
+          return {
+            key: categoryId,
+            domainId: "",
+            categoryId,
+            name: normalized
+          };
+        }
+      }
+
+      // 4. Semantic matching against official search categories from the sidebar
+      const title = (data.title || adv.title || "").toLowerCase();
+      const permalink = (data.permalink || "").toLowerCase();
+      const combined = `${title} ${permalink}`;
+
+      if (catFilters.length > 0) {
+        const sortedFilters = [...catFilters].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+        for (const filterVal of sortedFilters) {
+          const filterName = filterVal.name;
+          if (!filterName) continue;
+          const kws = this.getCategoryKeywords(filterName);
+          if (kws.some((kw) => combined.includes(kw))) {
+            return {
+              key: filterName,
+              domainId: "",
+              categoryId: filterVal.id || "",
+              name: filterName
+            };
+          }
+        }
+      }
+
+      // 5. Taxonomy matching for standard e-commerce verticals
+      const tax = this.classifyByTaxonomy(combined);
+      if (tax) {
+        return tax;
+      }
+
+      // 6. Fallback
+      const fallback = searchContext?.categoryName && !/^(geral|busca|resultados)/i.test(searchContext.categoryName)
+        ? searchContext.categoryName
+        : "Geral / Principal";
+
+      return {
+        key: fallback === "Geral / Principal" ? "GERAL" : fallback,
+        domainId: "",
+        categoryId: "",
+        name: fallback
+      };
     }
 
     static extractAppliedValueResults(urlOrObjOrStr) {
@@ -609,7 +868,9 @@
               const groupName = grp.name;
               const values = (grp.values ?? grp.applied_values ?? []).map((val) => {
                 const count = this.extractAppliedValueResults(val);
+                const valId = val.id || val.value_id || val.applied_value_id || "";
                 return {
+                  id: valId,
                   name: val.name || String(val),
                   count: count || 0,
                   isActive: Boolean(val.applied || val.is_applied || grp.applied_values?.includes(val))
@@ -632,9 +893,15 @@
               const nameEl = itemEl.querySelector(".ui-search-filter-name");
               const valName = nameEl?.textContent?.trim() || itemEl.textContent?.trim()?.split("(")[0]?.trim() || "";
               const link = itemEl.querySelector("a");
-              const count = this.extractAppliedValueResults(link?.href) || this.extractAppliedValueResults(itemEl.textContent);
+              const linkHref = link?.href || "";
+              let valId = "";
+              if (linkHref) {
+                const idMatch = decodeURIComponent(decodeURIComponent(linkHref)).match(/[?&#](?:applied_value_id|category_id)(?:=|%3D|%253D)(MLB\d+)/i);
+                if (idMatch) valId = idMatch[1];
+              }
+              const count = this.extractAppliedValueResults(linkHref) || this.extractAppliedValueResults(itemEl.textContent);
               const isActive = Boolean(itemEl.querySelector(".ui-search-filter-applied, .andes-checkbox--checked"));
-              return { name: valName, count: count || 0, isActive };
+              return { id: valId, name: valName, count: count || 0, isActive };
             }).filter((v) => v.name && v.name.length < 50);
 
             if (values.length && !filtersMap.has(groupName)) {
@@ -695,7 +962,7 @@
       return context;
     }
 
-    static groupAdsByDomainOrCategory(items, calculationFn) {
+    static groupAdsByDomainOrCategory(items, calculationFn, searchContext = null) {
       const byIdentity = new Map();
       let totalPositions = items.length;
       let duplicatedPositions = 0;
@@ -718,33 +985,15 @@
       const groupsMap = new Map();
 
       uniqueItems.forEach((it) => {
-        const domainId = it.advanced?.domainId || it.data?.domainId || "";
-        const categoryId = it.advanced?.categoryId || it.data?.categoryId || "";
-        const categoryName = it.advanced?.categoryName || it.data?.categoryName || "";
-
-        let key = "";
-        let displayName = "";
-
-        if (domainId) {
-          key = domainId;
-          displayName = this.normalizeDomainName(domainId);
-        } else if (categoryName) {
-          key = categoryName;
-          displayName = categoryName;
-        } else if (categoryId) {
-          key = categoryId;
-          displayName = this.normalizeDomainName(categoryId);
-        } else {
-          key = "GERAL";
-          displayName = "Geral / Principal";
-        }
+        const classification = this.classifyItemCategory(it, searchContext);
+        const key = classification.key;
 
         if (!groupsMap.has(key)) {
           groupsMap.set(key, {
             key,
-            domainId,
-            categoryId,
-            name: displayName,
+            domainId: classification.domainId,
+            categoryId: classification.categoryId,
+            name: classification.name,
             items: []
           });
         }
@@ -782,9 +1031,8 @@
         const fullCount = gItems.filter((it) => it.data.isFull || it.data.logisticType === "fulfillment").length;
 
         const totalAppearances = items.filter((it) => {
-          const itDomain = it.advanced?.domainId || it.data?.domainId || "";
-          if (grp.domainId && itDomain === grp.domainId) return true;
-          return grp.name === CategoryIntelligenceExtractor.normalizeDomainName(itDomain, it.data?.categoryName || "Geral / Principal");
+          const itClass = this.classifyItemCategory(it, searchContext);
+          return itClass.key === grp.key || itClass.name === grp.name;
         }).length;
 
         return {
@@ -817,9 +1065,11 @@
 
       const topGroup = groups[0] || null;
 
-      const insight = groups.length > 0
+      const insight = groups.length > 1
         ? `Foram identificadas <strong>${groups.length} subcategorias/domínios comerciais</strong> nesta pesquisa. O segmento líder é <strong>${topGroup ? escapeHtml(topGroup.name) : "Geral"}</strong>, concentrando <strong>${topGroup ? topGroup.revenueShare.toFixed(1) : 0}%</strong> do faturamento mensal estimado (<strong>${money.format(topGroup ? topGroup.projectedMonthlyRevenue : 0)}</strong>). Foram desduplicadas <strong>${duplicatedPositions} aparições patrocinadas</strong> sobrepostas no ranking.`
-        : "Dados insuficientes para estruturar agrupamento por categoria.";
+        : (groups.length === 1
+          ? `Foram identificadas <strong>1 subcategoria principal</strong> nesta pesquisa: <strong>${topGroup ? escapeHtml(topGroup.name) : "Geral"}</strong>, concentrando <strong>100%</strong> do faturamento projetado (<strong>${money.format(topGroup ? topGroup.projectedMonthlyRevenue : 0)}</strong>).`
+          : "Dados insuficientes para estruturar agrupamento por categoria.");
 
       return {
         totalPositions,
@@ -839,6 +1089,8 @@
       this.byIdentifier = new Map();
       this.byTitle = new Map();
       this.records = new Set();
+      this.catalogMetadata = new Map();
+      this.catalogByTitle = new Map();
       this.pdpData = null;
       this.searchContext = null;
       this.listeners = new Set();
@@ -846,6 +1098,48 @@
       this.notify = debounce(() => this.listeners.forEach((listener) => listener()), 120);
       bridgeInbox.forEach((payload) => this.schedule(payload));
       bridgeSubscribers.add((payload) => this.schedule(payload));
+    }
+
+    registerCategoryMetadata(identifiers, title, metadata) {
+      if (!metadata || (!metadata.domainId && !metadata.categoryId && !metadata.categoryName && !metadata.brand)) return;
+      const meta = {
+        domainId: metadata.domainId || "",
+        categoryId: metadata.categoryId || "",
+        categoryName: metadata.categoryName || "",
+        brand: metadata.brand || ""
+      };
+      (identifiers || []).forEach((id) => {
+        if (!id) return;
+        const prev = this.catalogMetadata.get(id) || {};
+        this.catalogMetadata.set(id, {
+          domainId: meta.domainId || prev.domainId || "",
+          categoryId: meta.categoryId || prev.categoryId || "",
+          categoryName: meta.categoryName || prev.categoryName || "",
+          brand: meta.brand || prev.brand || ""
+        });
+      });
+      const tKey = this.titleKey(title);
+      if (tKey) {
+        const prevT = this.catalogByTitle.get(tKey) || {};
+        this.catalogByTitle.set(tKey, {
+          domainId: meta.domainId || prevT.domainId || "",
+          categoryId: meta.categoryId || prevT.categoryId || "",
+          categoryName: meta.categoryName || prevT.categoryName || "",
+          brand: meta.brand || prevT.brand || ""
+        });
+      }
+    }
+
+    getCategoryMetadata(data) {
+      if (!data) return null;
+      for (const id of (data.identifiers || [])) {
+        if (this.catalogMetadata.has(id)) return this.catalogMetadata.get(id);
+      }
+      if (data.itemId && this.catalogMetadata.has(data.itemId)) return this.catalogMetadata.get(data.itemId);
+      if (data.permalink && this.catalogMetadata.has(data.permalink)) return this.catalogMetadata.get(data.permalink);
+      const tKey = this.titleKey(data.title);
+      if (tKey && this.catalogByTitle.has(tKey)) return this.catalogByTitle.get(tKey);
+      return null;
     }
 
     getSearchContext() {
@@ -872,7 +1166,7 @@
 
     ingestText(text) {
       try {
-        const { root, pdp, searchRecords } = NordicJsonExtractor.fromText(text);
+        const { root, pdp, searchRecords, catalogItems } = NordicJsonExtractor.fromText(text);
         if (root) {
           const ctx = CategoryIntelligenceExtractor.extractSearchContext(root, document);
           if (ctx && (ctx.totalResults > 0 || ctx.filters?.length > 0)) {
@@ -881,9 +1175,13 @@
             }
           }
         }
-        searchRecords.forEach((record) => this.upsert(record));
+        (catalogItems || []).forEach((cat) => this.registerCategoryMetadata(cat.identifiers, cat.title, cat));
+        searchRecords.forEach((record) => {
+          this.registerCategoryMetadata(record.identifiers, record.title, record);
+          this.upsert(record);
+        });
         if (pdp && (pdp.itemId || pdp.price || pdp.soldQuantity)) this.upsertPdp(pdp);
-        if (searchRecords.length || pdp?.itemId) this.notify();
+        if (searchRecords.length || pdp?.itemId || (catalogItems && catalogItems.length)) this.notify();
       } catch (error) {
         console.debug(`${APP}: bloco estruturado ignorado`, error);
       }
@@ -891,6 +1189,13 @@
 
     upsert(record) {
       if (!record?.identifiers?.length) return;
+      const catMeta = this.getCategoryMetadata(record);
+      if (catMeta) {
+        record.domainId = record.domainId || catMeta.domainId || "";
+        record.categoryId = record.categoryId || catMeta.categoryId || "";
+        record.categoryName = record.categoryName || catMeta.categoryName || "";
+        record.brand = record.brand || catMeta.brand || "";
+      }
       const previous = record.identifiers.map((id) => this.byIdentifier.get(id)).find(Boolean);
       const merged = previous ? {
         ...previous,
@@ -956,6 +1261,11 @@
       let record = (data.identifiers ?? []).map((id) => this.byIdentifier.get(id)).find(Boolean);
       if (!record) record = this.byTitle.get(this.titleKey(data.title));
       if (!record) return null;
+      const catMeta = this.getCategoryMetadata(data) || this.getCategoryMetadata(record);
+      const domainId = record.domainId || catMeta?.domainId || "";
+      const categoryId = record.categoryId || catMeta?.categoryId || "";
+      const categoryName = record.categoryName || catMeta?.categoryName || "";
+      const brand = record.brand || catMeta?.brand || "";
       const price = data.price || record.price;
       const days = record.creationDate ? Math.max(1, Math.ceil((Date.now() - new Date(record.creationDate).valueOf()) / 86400000)) : record.estimatedDaysActive || 0;
       const salesPerDay = record.soldQuantity && days ? record.soldQuantity / days : record.salesPerDay || 0;
@@ -966,10 +1276,10 @@
         salesPerDay,
         salesPerMonth: salesPerDay * 30,
         monthlyRevenue: salesPerDay * 30 * price,
-        domainId: record.domainId || "",
-        categoryId: record.categoryId || "",
-        categoryName: record.categoryName || "",
-        brand: record.brand || "",
+        domainId,
+        categoryId,
+        categoryName,
+        brand,
         dataQuality: record.dataQuality || "basic"
       };
     }
@@ -1030,6 +1340,39 @@
         card.querySelector("[data-id]")?.getAttribute("data-id"),
         card.querySelector("[data-item-id]")?.getAttribute("data-item-id")
       ]);
+      let cardCategoryId = "";
+      let cardDomainId = "";
+
+      const cardLinks = [titleLink?.href, ...Array.from(card.querySelectorAll("a[href]")).map((a) => a.href)].filter(Boolean);
+      for (const linkHref of cardLinks) {
+        if (!cardCategoryId) {
+          const catMatch = decodeURIComponent(decodeURIComponent(linkHref)).match(/[?&#](?:category_id|applied_value_id)(?:=|%3D|%253D)(MLB\d+)/i);
+          if (catMatch) cardCategoryId = catMatch[1];
+        }
+        if (!cardDomainId) {
+          const domMatch = decodeURIComponent(decodeURIComponent(linkHref)).match(/[?&#]domain_id(?:=|%3D|%253D)(MLB-[A-Z0-9_]+)/i);
+          if (domMatch) cardDomainId = domMatch[1];
+        }
+        if (cardCategoryId && cardDomainId) break;
+      }
+
+      if (!cardCategoryId) {
+        cardCategoryId = card.getAttribute("data-category-id") || card.querySelector("[data-category-id]")?.getAttribute("data-category-id") || "";
+      }
+      if (!cardDomainId) {
+        cardDomainId = card.getAttribute("data-domain-id") || card.querySelector("[data-domain-id]")?.getAttribute("data-domain-id") || "";
+      }
+
+      const trackAttr = card.getAttribute("data-track") || titleLink?.getAttribute("data-track") || card.querySelector("[data-track]")?.getAttribute("data-track");
+      if (trackAttr && (!cardCategoryId || !cardDomainId)) {
+        try {
+          const trackJson = JSON.parse(trackAttr);
+          const evData = trackJson?.event_data || trackJson;
+          if (!cardDomainId && evData?.domain_id) cardDomainId = evData.domain_id;
+          if (!cardCategoryId && evData?.category_id) cardCategoryId = evData.category_id;
+        } catch { /* ignore */ }
+      }
+
       return {
         hasDeepData: false,
         title: titleLink?.textContent?.trim() ?? "Produto sem título",
@@ -1039,7 +1382,9 @@
         campaignType: isLightning ? "lightning" : "",
         listingTypeId: /sem\s+juros/i.test(installment) || /rgb\(0,\s*166,\s*80\)|#00a650/i.test(card.querySelector(".poly-price__installments")?.getAttribute("style") ?? "") ? "gold_pro" : "gold_special",
         logisticType: fullNode ? "fulfillment" : "", isFull: Boolean(fullNode), isSponsored: /patrocinado/i.test(text) || Boolean(card.querySelector('[aria-label="Patrocinado"], .poly-component__ads-promotions')),
-        soldQuantity, reviewRate: ratingMatch ? asNumber(ratingMatch[1].replace(",", ".")) : 0
+        soldQuantity, reviewRate: ratingMatch ? asNumber(ratingMatch[1].replace(",", ".")) : 0,
+        domainId: cardDomainId,
+        categoryId: cardCategoryId
       };
     }
 
@@ -1399,6 +1744,13 @@
       if (card.closest(".andes-carousel-snapped, [data-andes-carousel-snapped-main], .poly-component__carousel")) return;
       const data = DomFallbackExtractor.fromSearchCard(card);
       if (!data.price || !data.permalink) return;
+      const catMeta = this.registry.getCategoryMetadata(data);
+      if (catMeta) {
+        data.domainId = data.domainId || catMeta.domainId || "";
+        data.categoryId = data.categoryId || catMeta.categoryId || "";
+        data.categoryName = data.categoryName || catMeta.categoryName || "";
+        data.brand = data.brand || catMeta.brand || "";
+      }
       card.dataset.calculadoraLivreReady = "1";
       const panel = document.createElement("section"); panel.className = "cl-root cl-poly";
       const mountPoint = card.querySelector(".poly-card__content") ?? card.querySelector(".poly-card") ?? card;
@@ -1451,9 +1803,22 @@
     }
 
     applyStructured(item) {
+      const catMeta = this.registry.getCategoryMetadata(item.data);
+      if (catMeta) {
+        item.data.domainId = item.data.domainId || catMeta.domainId || "";
+        item.data.categoryId = item.data.categoryId || catMeta.categoryId || "";
+        item.data.categoryName = item.data.categoryName || catMeta.categoryName || "";
+        item.data.brand = item.data.brand || catMeta.brand || "";
+      }
       const record = this.registry.find(item.data);
       if (!record?.creationDate || !record.soldQuantity) return false;
       item.advanced = record;
+      if (catMeta) {
+        item.advanced.domainId = item.advanced.domainId || catMeta.domainId || "";
+        item.advanced.categoryId = item.advanced.categoryId || catMeta.categoryId || "";
+        item.advanced.categoryName = item.advanced.categoryName || catMeta.categoryName || "";
+        item.advanced.brand = item.advanced.brand || catMeta.brand || "";
+      }
       item.advancedState = "ready";
       this.queued.delete(item);
       return true;
@@ -2178,7 +2543,7 @@
 
     // 6. Inteligência de Categorias
     static calculateCategories(items, calculationFn, searchContext) {
-      const grouping = CategoryIntelligenceExtractor.groupAdsByDomainOrCategory(items, calculationFn);
+      const grouping = CategoryIntelligenceExtractor.groupAdsByDomainOrCategory(items, calculationFn, searchContext);
       return {
         ...grouping,
         searchContext: searchContext || { totalResults: 0, filters: [], relatedSearches: [] }
@@ -2532,7 +2897,8 @@
         calculatedItems.forEach(({ it, calc, repasseMargin, monthlyRev, monthlyNet }, idx) => {
           const creation = it.advanced?.creationDate ? new Date(it.advanced.creationDate) : null;
           const validCreation = creation && !Number.isNaN(creation.valueOf());
-          const catLabel = it.advanced?.domainId ? CategoryIntelligenceExtractor.normalizeDomainName(it.advanced.domainId) : (it.advanced?.categoryName || it.data?.categoryName || "Geral");
+          const catClassification = CategoryIntelligenceExtractor.classifyItemCategory(it, searchCtx);
+          const catLabel = catClassification?.name || "Geral";
           const qualityLabel = it.advanced?.dataQuality === "complete" ? "Completa (Data confirmada)" : (it.advanced?.dataQuality === "estimated" ? "Estimada (Via foto/revisão)" : "Básica (Sem idade)");
 
           sheetRows1.push([
@@ -2564,7 +2930,7 @@
         });
 
         // ABA 2: Resumo de Categorias
-        const catGrouping = CategoryIntelligenceExtractor.groupAdsByDomainOrCategory(allItems, (d) => cards.calculation(d));
+        const catGrouping = CategoryIntelligenceExtractor.groupAdsByDomainOrCategory(allItems, (d) => cards.calculation(d), searchCtx);
         const sheetRows2 = [
           [{ v: "CALCULADORA LIVRE — RESUMO DE CATEGORIAS E SUBDOMÍNIOS", bold: true }],
           ["Data da Exportação", new Date().toLocaleString("pt-BR")],
@@ -2761,7 +3127,7 @@
       const centsPart = Math.round((val - integerPart) * 100);
       const fractionStr = integerPart.toLocaleString("pt-BR");
       const centsStr = centsPart.toString().padStart(2, "0");
-      return `<span class="cl-ml-price"><span class="cl-ml-price__symbol">R$</span><span class="cl-ml-price__fraction">${fractionStr}</span><span class="cl-ml-price__cents">${centsStr}</span></span>`;
+      return `<span class="cl-ml-price"><span class="cl-ml-price__symbol">R$&nbsp;</span><span class="cl-ml-price__fraction">${fractionStr}</span><span class="cl-ml-price__cents">,${centsStr}</span></span>`;
     }
 
     static getInstance() {

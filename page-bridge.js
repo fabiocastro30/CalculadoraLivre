@@ -18,7 +18,7 @@
     }
   };
 
-  const hasUsefulData = (text) => /sold_quantity|date_created|start_time|item_id|user_product_id|picture_id/i.test(text);
+  const hasUsefulData = (text) => /sold_quantity|date_created|start_time|item_id|user_product_id|picture_id|domain_id|category_id/i.test(text);
 
   function publish(kind, text, url = location.href, cacheKey = "") {
     if (typeof text !== "string" || !text || text.length > MAX_PAYLOAD_LENGTH || !hasUsefulData(text)) return;
