@@ -69,16 +69,13 @@ Ao clicar no botão **"Ver detalhes da inteligência (Painel Pro)"**, abre-se um
 - **🚀 Novos Entrantes (Sinais de Alto Giro & Vitrine de Recentes):** Vitrine visual de cards com fotos e métricas para anúncios com até 90 dias que já superam a mediana do segmento, com validação de datas confirmadas vs aproximadas;
 - **🧮 Simulador de Entrada no Mercado:** Simulação operacional em tempo real onde o vendedor insere preço e custo para calcular repasse, sobra operacional, margem real, meta de lucro, **preço mínimo viável** (respeitando degraus de frete) e **custo máximo de aquisição** em 3 cenários de mercado (Conservador P25, Referência P50, Expansivo P75).
 
-### 6. 📥 Exportação Profissional para Excel (.xlsx) com 6 Abas
-Disponível tanto no cabeçalho do **Painel Pro** quanto no painel lateral do **IQV**, o botão **"Exportar Dados (Excel)"** gera instantaneamente uma planilha `.xlsx` organizada com **6 abas internas** geradas 100% no navegador (sem chamadas a servidores externos ou dependências pesadas):
-- **Aba 1: Visão Geral de Mercado:** Métricas consolidadas de demanda, receita projetada, percentis de giro e diagnóstico completo;
-- **Aba 2: Preços e Tickets:** Tabela analítica das faixas de preço, giro mediano, repasse médio e Score de Eficiência Comercial;
-- **Aba 3: Concorrência:** Lista dos líderes de faturamento, faturamento individual, share de mercado, e índices C5, C10 e HHI;
-- **Aba 4: Novos Entrantes:** Relatório dos anúncios com até 90 dias que já possuem alto giro, multiplicadores sobre a mediana e validação de datas;
-- **Aba 5: Simulador de Entrada:** Parâmetros da simulação operacional, sobra líquida, margem, preço mínimo viável e cenários P25/P50/P75;
-- **Aba 6: Listagem Completa:** Base tabular linha a linha de todos os anúncios capturados na página com título, preço, repasse líquido, taxa ML, frete estimado, vendas, giro diário e faturamento mensal.
-
-A exportação conta com um **modal com barra de progresso e checklist visual em tempo real**, garantindo total transparência e suavidade durante o processamento dos dados.
+### 6. 📥 Exportação Profissional para Excel (.xlsx) da Lista de Anúncios
+Disponível tanto no cabeçalho do **Painel Pro** quanto no painel lateral do **IQV**, o botão **"Exportar Anúncios (Excel)"** gera instantaneamente uma planilha `.xlsx` organizada com a **lista completa de anúncios da pesquisa** gerada 100% no navegador (sem chamadas a servidores externos ou dependências pesadas):
+- **Valores Monetários Formatados:** Preço de venda, repasse líquido, comissão ML, frete estimado e faturamento mensal todos devidamente formatados com `R$` (ex: `R$ 49,90`, `R$ 1.500,00`);
+- **Detalhamento Financeiro:** Percentuais de comissão e repasse (`%`), tipo de anúncio (Clássico/Premium) e modalidade logística (Full/Normal);
+- **Métricas de Performance:** Vendas totais, idade do anúncio, data de criação, giro diário estimado (`un./dia`), vendas mensais projetadas e estoque disponível;
+- **Resumo Executivo Integrado:** Linhas de cabeçalho com o termo pesquisado, data de extração, total de anúncios, faturamento estimado da amostra e repasse médio por item;
+- **Barra de Progresso Interativa:** Modal elegante com checklist visual em 4 etapas acompanhando a coleta, os cálculos de comissão/frete, a formatação em R$ e o download automático do arquivo.
 
 ---
 
