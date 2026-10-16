@@ -1671,8 +1671,8 @@
       const maxAcquisitionCost = repasse - knownExpenses - (price * targetMargin / 100);
 
       let minViablePrice = null;
-      if (productCost != null) {
-        for (let p = 10; p <= 5000; p += 0.50) {
+      if (productCost != null && productCost > 0) {
+        for (let p = Math.max(5, Math.floor(productCost)); p <= 10000; p += 0.50) {
           const testCalc = pricingEngine.calculate({
             price: p,
             commissionPercent,
@@ -1698,7 +1698,11 @@
         productCost,
         repasse,
         commission: calc.commission,
+        commissionPercent,
         shippingFee: calc.shippingFee,
+        taxes,
+        adsCost,
+        packagingCost,
         knownExpenses,
         unitProfit,
         marginPercent,
@@ -2240,7 +2244,7 @@
             <div class="cl-intel-modal__title-group">
               <h2 id="cl-intel-title" class="cl-intel-modal__title">
                 <span>Calculadora Livre</span>
-                <span class="cl-intel-badge-pro">Intelligence Pro</span>
+                <span class="cl-intel-badge-pro">Inteligência</span>
               </h2>
               <span class="cl-intel-modal__subtitle">Análise avançada de atratividade comercial e viabilidade</span>
             </div>
@@ -2783,20 +2787,13 @@
       `;
     }
 
+    getItems() {
+      const allItems = this.cards ? this.cards.values() : [];
+      return MarketIntelligenceEngine.filterBySegment(allItems, this.selectedSegment);
+    }
+
     // 5. Simulador
     renderSimulatorTab(items) {
-      const sim = MarketIntelligenceEngine.calculateSimulator(this.simForm, MeliPricingEngine2026);
-
-      const p25 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.25) || 2;
-      const p50 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.50) || 4;
-      const p75 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.75) || 8;
-
-      const scenConservador = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p25 }, MeliPricingEngine2026);
-      const scenReferencia = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p50 }, MeliPricingEngine2026);
-      const scenExpansivo = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p75 }, MeliPricingEngine2026);
-
-      const hasCost = sim.productCost != null;
-
       return `
         <div class="cl-intel-sim-grid">
           <!-- Coluna 1: Formulário de Configuração Operacional -->
@@ -2806,15 +2803,15 @@
               <span style="font-size: 11px; color: #64748b;">Ajuste em tempo real</span>
             </div>
 
-            <form class="cl-intel-form-grid" data-sim-form>
+            <form class="cl-intel-form-grid" data-sim-form onsubmit="return false;">
               <div class="cl-intel-field">
                 <label>Preço Pretendido de Venda (R$)</label>
-                <input type="number" step="0.01" min="0.01" data-sim="price" value="${escapeHtml(this.simForm.price)}" required placeholder="Ex: 99.90">
+                <input type="number" step="0.01" min="0.01" data-sim="price" value="${escapeHtml(this.simForm.price)}" placeholder="Ex: 99.90">
               </div>
 
               <div class="cl-intel-field">
                 <label>Seu Custo do Produto (R$)</label>
-                <input type="number" step="0.01" min="0" data-sim="productCost" value="${escapeHtml(this.simForm.productCost)}" placeholder="Deixe em branco p/ calcular custo máx.">
+                <input type="number" step="0.01" min="0" data-sim="productCost" value="${escapeHtml(this.simForm.productCost)}" placeholder="Ex: 35.00">
               </div>
 
               <div class="cl-intel-field">
@@ -2871,86 +2868,159 @@
           </div>
 
           <!-- Coluna 2: Resultados Financeiros Operacionais -->
-          <div class="cl-intel-sim-results">
-            <div class="cl-intel-sim-callout">
-              <div style="display: flex; align-items: baseline; justify-content: space-between;">
-                <strong>Você Recebe do Mercado Livre</strong>
-                <span style="font-size: 11px; color: #166534;">(Após comissão de ${money.format(sim.commission)} e frete de ${money.format(sim.shippingFee)})</span>
+          ${this.renderSimulatorResultsHtml(items)}
+        </div>
+      `;
+    }
+
+    renderSimulatorResultsHtml(items) {
+      const sim = MarketIntelligenceEngine.calculateSimulator(this.simForm, MeliPricingEngine2026);
+
+      const p25 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.25) || 2;
+      const p50 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.50) || 4;
+      const p75 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.75) || 8;
+
+      const scenConservador = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p25 }, MeliPricingEngine2026);
+      const scenReferencia = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p50 }, MeliPricingEngine2026);
+      const scenExpansivo = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p75 }, MeliPricingEngine2026);
+
+      const hasCost = sim.productCost != null && sim.productCost > 0;
+
+      return `
+        <div class="cl-intel-sim-results" data-sim-results>
+          <!-- Callout Principal Dinâmico -->
+          <div class="cl-intel-sim-callout" style="${hasCost ? 'background: #f0fdf4; border-color: #86efac;' : ''}">
+            <div style="display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
+              <strong>${hasCost ? 'Sobra Líquida no Seu Bolso (Lucro Real)' : 'Você Recebe do Mercado Livre'}</strong>
+              <span style="font-size: 11px; color: ${hasCost ? '#15803d' : '#166534'};">
+                ${hasCost ? `Margem Real de <strong>${sim.marginPercent.toFixed(1)}%</strong> limpa` : `(Após comissão de ${money.format(sim.commission)} e frete de ${money.format(sim.shippingFee)})`}
+              </span>
+            </div>
+            <div class="cl-val" style="color: ${hasCost && sim.unitProfit < 0 ? '#dc2626' : '#00a650'};">
+              ${hasCost ? money.format(sim.unitProfit) : money.format(sim.repasse)}
+              <small style="font-size: 13px; font-weight: 600; color: #15803d;">/ venda</small>
+            </div>
+            <div style="margin-top: 6px; font-size: 11.5px; color: #475569;">
+              ${hasCost
+                ? `Repasse que entra do ML: <strong>${money.format(sim.repasse)}</strong> • Seu custo do produto: <strong>- ${money.format(sim.productCost)}</strong> • Impostos/Despesas: <strong>- ${money.format(sim.knownExpenses)}</strong>`
+                : 'Informe seu custo do produto ao lado para calcular o lucro líquido real e a sobra exata no seu bolso.'}
+            </div>
+          </div>
+
+          <div class="cl-intel-kpis" style="grid-template-columns: 1fr 1fr;">
+            <div class="cl-intel-kpi">
+              <div class="cl-intel-kpi__label">Repasse Transferido pelo ML</div>
+              <div class="cl-intel-kpi__value" style="color: #00a650;">
+                ${money.format(sim.repasse)}
               </div>
-              <div class="cl-val">${money.format(sim.repasse)} <small style="font-size: 13px; font-weight: 600; color: #15803d;">/ venda</small></div>
+              <div class="cl-intel-kpi__sub">Valor que cai na conta Mercado Pago</div>
             </div>
 
-            <div class="cl-intel-kpis" style="grid-template-columns: 1fr 1fr;">
-              <div class="cl-intel-kpi">
-                <div class="cl-intel-kpi__label">Sobra Operacional Líquida</div>
-                <div class="cl-intel-kpi__value" style="color: ${hasCost && sim.unitProfit >= 0 ? '#059669' : (hasCost ? '#dc2626' : '#64748b')};">
-                  ${hasCost ? money.format(sim.unitProfit) : 'Informe seu custo'}
-                </div>
-                <div class="cl-intel-kpi__sub">${hasCost ? `Margem de <strong>${sim.marginPercent.toFixed(1)}%</strong>` : 'Livre de impostos e despesas'}</div>
+            <div class="cl-intel-kpi">
+              <div class="cl-intel-kpi__label">Lucro Mensal Simulado</div>
+              <div class="cl-intel-kpi__value" style="color: ${hasCost && sim.monthlyProfit >= 0 ? '#059669' : (hasCost ? '#dc2626' : '#64748b')};">
+                ${hasCost ? money.format(sim.monthlyProfit) : '—'}
               </div>
+              <div class="cl-intel-kpi__sub">${hasCost ? `Projeção de ${number.format(sim.dailySales * 30)} vendas/mês` : 'Preencha o custo para projetar'}</div>
+            </div>
+          </div>
 
-              <div class="cl-intel-kpi">
-                <div class="cl-intel-kpi__label">Lucro Mensal Simulado</div>
-                <div class="cl-intel-kpi__value" style="color: ${hasCost && sim.monthlyProfit >= 0 ? '#059669' : (hasCost ? '#dc2626' : '#64748b')};">
-                  ${hasCost ? money.format(sim.monthlyProfit) : '—'}
-                </div>
-                <div class="cl-intel-kpi__sub">${hasCost ? `Faturamento de ${money.format(sim.monthlyRevenue)}` : 'Preencha seu custo para projetar'}</div>
-              </div>
+          <!-- Demonstrativo Financeiro Completo da Venda -->
+          <div class="cl-intel-card" style="padding: 14px 16px;">
+            <div class="cl-intel-section-title">
+              <span>Raio-X Financeiro da Venda Unitária</span>
+              <span style="font-size: 11px; color: #64748b;">DRE por pedido</span>
             </div>
 
-            <div class="cl-intel-card">
-              <div class="cl-intel-section-title">
-                <span>Inteligência de Viabilidade & Decisão</span>
+            <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; margin-top: 8px;">
+              <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                <span>Preço de Venda Praticado:</span>
+                <strong>+ ${money.format(sim.price)}</strong>
               </div>
-
-              <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12.5px;">
-                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
-                  <span>💡 <strong>Quanto posso pagar no produto?</strong></span>
-                  <strong style="color: ${sim.maxAcquisitionCost >= 0 ? '#059669' : '#dc2626'};">
-                    ${sim.maxAcquisitionCost >= 0 ? 'Até ' + money.format(sim.maxAcquisitionCost) : 'Margem inatingível neste preço'}
-                  </strong>
-                </div>
-
-                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
-                  <span>🎯 <strong>Preço mínimo de venda viável:</strong></span>
-                  <strong style="color: #1e293b;">
-                    ${sim.minViablePrice ? money.format(sim.minViablePrice) : (hasCost ? 'Acima do teto de simulação' : 'Informe seu custo')}
-                  </strong>
-                </div>
-
-                <div style="display: flex; justify-content: space-between; padding: 6px 0;">
-                  <span>📦 <strong>Vendas para meta de ${money.format(sim.monthlyGoal)}:</strong></span>
-                  <strong>
-                    ${sim.unitsForGoal ? number.format(sim.unitsForGoal) + ' vendas/mês (' + (sim.unitsForGoal / 30).toFixed(1) + '/dia)' : '—'}
-                  </strong>
-                </div>
+              <div style="display: flex; justify-content: space-between; padding: 4px 0; color: #dc2626;">
+                <span>(-) Tarifa de Comissão ML (${sim.commissionPercent}%):</span>
+                <span>- ${money.format(sim.commission)}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 4px 0; color: #dc2626;">
+                <span>(-) Tarifa de Envio ML:</span>
+                <span>- ${money.format(sim.shippingFee)}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 6px 0; border-top: 1px dashed #cbd5e1; border-bottom: 1px dashed #cbd5e1; font-weight: 700; color: #166534; background: #f0fdf4; margin: 2px -6px; padding-left: 6px; padding-right: 6px; border-radius: 4px;">
+                <span>(=) Repasse Líquido do ML:</span>
+                <span>${money.format(sim.repasse)}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 4px 0; color: ${hasCost ? '#dc2626' : '#64748b'};">
+                <span>(-) Seu Custo do Produto:</span>
+                <span>${hasCost ? '- ' + money.format(sim.productCost) : 'Não informado'}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 4px 0; color: #dc2626;">
+                <span>(-) Impostos (${this.simForm.taxPercent || 0}%):</span>
+                <span>- ${money.format(sim.taxes)}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 4px 0; color: #dc2626;">
+                <span>(-) Embalagem e Publicidade:</span>
+                <span>- ${money.format(sim.packagingCost + sim.adsCost)}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 8px 6px; border-top: 2px solid #00a650; font-size: 13.5px; font-weight: 800; color: ${hasCost && sim.unitProfit < 0 ? '#dc2626' : '#00a650'}; background: #e8f8ee; border-radius: 4px; margin-top: 4px;">
+                <span>(=) Sobra Real no Seu Bolso:</span>
+                <span>${hasCost ? money.format(sim.unitProfit) + ` (${sim.marginPercent.toFixed(1)}%)` : 'Informe o custo'}</span>
               </div>
             </div>
+          </div>
 
-            <!-- Cenários de Venda -->
-            <div class="cl-intel-card">
-              <div class="cl-intel-section-title">
-                <span>Cenários de Vendas Baseados na Busca</span>
+          <!-- Decisão & Viabilidade -->
+          <div class="cl-intel-card">
+            <div class="cl-intel-section-title">
+              <span>Inteligência de Viabilidade & Decisão</span>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12.5px;">
+              <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
+                <span>🎯 <strong>Preço sugerido para sua margem (${sim.targetMargin}%):</strong></span>
+                <strong style="color: #1e293b; font-size: 13.5px;">
+                  ${sim.minViablePrice ? money.format(sim.minViablePrice) : (hasCost ? 'Acima do teto de simulação' : 'Informe seu custo')}
+                </strong>
               </div>
 
-              <div class="cl-intel-scenarios-grid">
-                <div class="cl-intel-scenario-card">
-                  <span>Conservador (P25)</span>
-                  <strong>${number.format(p25)} un./dia</strong>
-                  <small>${hasCost ? money.format(scenConservador.monthlyProfit) + '/mês' : money.format(scenConservador.monthlyRevenue)}</small>
-                </div>
+              <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
+                <span>💡 <strong>Custo máximo que pode pagar no produto:</strong></span>
+                <strong style="color: ${sim.maxAcquisitionCost >= 0 ? '#059669' : '#dc2626'};">
+                  ${sim.maxAcquisitionCost >= 0 ? 'Até ' + money.format(sim.maxAcquisitionCost) : 'Margem inatingível neste preço'}
+                </strong>
+              </div>
 
-                <div class="cl-intel-scenario-card is-ref">
-                  <span>Referência (P50)</span>
-                  <strong>${number.format(p50)} un./dia</strong>
-                  <small>${hasCost ? money.format(scenReferencia.monthlyProfit) + '/mês' : money.format(scenReferencia.monthlyRevenue)}</small>
-                </div>
+              <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+                <span>📦 <strong>Vendas para meta de ${money.format(sim.monthlyGoal)}:</strong></span>
+                <strong>
+                  ${sim.unitsForGoal ? number.format(sim.unitsForGoal) + ' vendas/mês (' + (sim.unitsForGoal / 30).toFixed(1) + '/dia)' : '—'}
+                </strong>
+              </div>
+            </div>
+          </div>
 
-                <div class="cl-intel-scenario-card">
-                  <span>Expansivo (P75)</span>
-                  <strong>${number.format(p75)} un./dia</strong>
-                  <small>${hasCost ? money.format(scenExpansivo.monthlyProfit) + '/mês' : money.format(scenExpansivo.monthlyRevenue)}</small>
-                </div>
+          <!-- Cenários de Venda -->
+          <div class="cl-intel-card">
+            <div class="cl-intel-section-title">
+              <span>Cenários de Vendas Baseados na Busca</span>
+            </div>
+
+            <div class="cl-intel-scenarios-grid">
+              <div class="cl-intel-scenario-card">
+                <span>Conservador (P25)</span>
+                <strong>${number.format(p25)} un./dia</strong>
+                <small>${hasCost ? money.format(scenConservador.monthlyProfit) + '/mês lucro' : money.format(scenConservador.monthlyRevenue) + '/mês fat.'}</small>
+              </div>
+
+              <div class="cl-intel-scenario-card is-ref">
+                <span>Referência (P50)</span>
+                <strong>${number.format(p50)} un./dia</strong>
+                <small>${hasCost ? money.format(scenReferencia.monthlyProfit) + '/mês lucro' : money.format(scenReferencia.monthlyRevenue) + '/mês fat.'}</small>
+              </div>
+
+              <div class="cl-intel-scenario-card">
+                <span>Expansivo (P75)</span>
+                <strong>${number.format(p75)} un./dia</strong>
+                <small>${hasCost ? money.format(scenExpansivo.monthlyProfit) + '/mês lucro' : money.format(scenExpansivo.monthlyRevenue) + '/mês fat.'}</small>
               </div>
             </div>
           </div>
@@ -3001,23 +3071,23 @@
         this.render();
       });
 
-      // Live simulator inputs
+      // Live simulator inputs (atualização pontual dos resultados sem perda de foco)
+      const updateSimulator = (key, val) => {
+        this.simForm[key] = val;
+        const resultsEl = this.root.querySelector("[data-sim-results]");
+        if (resultsEl) {
+          const items = this.getItems();
+          resultsEl.outerHTML = this.renderSimulatorResultsHtml(items);
+        }
+      };
+
       this.root.querySelectorAll("[data-sim]").forEach((input) => {
         const key = input.dataset.sim;
         input.addEventListener("input", (e) => {
-          this.simForm[key] = e.target.value;
-          this.render();
-          // Restore focus
-          const refocused = this.root.querySelector(`[data-sim="${key}"]`);
-          if (refocused) {
-            refocused.focus();
-            const len = refocused.value.length;
-            refocused.setSelectionRange?.(len, len);
-          }
+          updateSimulator(key, e.target.value);
         });
         input.addEventListener("change", (e) => {
-          this.simForm[key] = e.target.value;
-          this.render();
+          updateSimulator(key, e.target.value);
         });
       });
     }
@@ -3177,12 +3247,7 @@
 
         <button type="button" class="cl-iqv-details-btn" data-iqv-open-modal>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-          <span>Ver detalhes da inteligência (Painel Pro)</span>
-        </button>
-
-        <button type="button" class="cl-iqv-export-btn" data-iqv-export title="Exportar lista de anúncios em Excel (.xlsx)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span>Exportar Anúncios (Excel)</span>
+          <span>Ver detalhes da inteligência</span>
         </button>
       `;
 
@@ -3197,18 +3262,6 @@
         const items = this.cards.values();
         const analysis = IQVAnalysisEngine.analyze(items, (data) => this.cards.calculation(data));
         MarketIntelligenceModal.open(this.cards, this.settings, analysis);
-      });
-
-      const expBtn = this.root.querySelector("[data-iqv-export]");
-      expBtn?.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        CalculadoraLivreXlsxExporter.runExport({
-          cards: this.cards,
-          settings: this.settings,
-          iqvAnalysis: IQVAnalysisEngine.analyze(this.cards.values(), (d) => this.cards.calculation(d)),
-          simForm: null
-        });
       });
     }
   }

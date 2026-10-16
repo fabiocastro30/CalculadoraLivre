@@ -61,8 +61,8 @@ Apresentado imediatamente acima dos filtros na barra lateral de buscas, o IQV co
 2. **Receita Bruta (Peso 35%):** Mediana do faturamento mensal estimado ($SF = 100 \times \min(1, \ln(1 + F) / \ln(50001))$);
 3. **Retorno Líquido Promocional (Peso 25%):** Mediana da margem de repasse líquido sobre o preço após comissões e frete ($SR = 100 \times \text{clamp}((R - 0.50) / 0.35, 0, 1)$).
 
-### 5. 🚀 CalcuLivre Intelligence (Fase 1 — Painel Pro Expandido)
-Ao clicar no botão **"Ver detalhes da inteligência (Painel Pro)"**, abre-se um modal profissional completo concebido na identidade visual nativa do Mercado Livre (Andes UI), abrindo diretamente na aba prioritária de precificação com 5 sub-módulos integrados e filtro global por ticket:
+### 5. 🚀 Calculadora Livre Intelligence (Painel de Inteligência Expandido)
+Ao clicar no botão **"Ver detalhes da inteligência"**, abre-se um painel completo concebido na identidade visual nativa do Mercado Livre (Andes UI), abrindo diretamente na aba prioritária de precificação com 5 sub-módulos integrados e filtro global por ticket:
 - **🏷️ Preços e Tickets (Faixas Mais Eficientes — Aba Inicial):** Segmentação de preços em faixas de R$ 10, R$ 20 ou automática, ranqueando as faixas pelo Índice de Eficiência comercial, giro mediano e repasse percentual com gráficos comparativos e tabela completa;
 - **📊 Visão de Mercado (Radar de Demanda):** Giro diário agregado, faturamento mensal projetado da amostra, giro mediano, percentis $P25, P50, P75$ e curva de velocidade de vendas;
 - **🏆 Concorrência (Concentração de Concorrentes & Vitrine de Líderes):** Vitrine com **cards nativos realistas do Mercado Livre** (foto, preço fracionado, tags Full/Frete Grátis e badges de inteligência) dos 5 maiores líderes de faturamento, além dos índices de concentração ($C5$, $C10$) e Herfindahl-Hirschman ($HHI$);
@@ -70,7 +70,7 @@ Ao clicar no botão **"Ver detalhes da inteligência (Painel Pro)"**, abre-se um
 - **🧮 Simulador de Entrada no Mercado:** Simulação operacional em tempo real onde o vendedor insere preço e custo para calcular repasse, sobra operacional, margem real, meta de lucro, **preço mínimo viável** (respeitando degraus de frete) e **custo máximo de aquisição** em 3 cenários de mercado (Conservador P25, Referência P50, Expansivo P75).
 
 ### 6. 📥 Exportação Profissional para Excel (.xlsx) da Lista de Anúncios
-Disponível tanto no cabeçalho do **Painel Pro** quanto no painel lateral do **IQV**, o botão **"Exportar Anúncios (Excel)"** gera instantaneamente uma planilha `.xlsx` organizada com a **lista completa de anúncios da pesquisa** gerada 100% no navegador (sem chamadas a servidores externos ou dependências pesadas):
+Disponível diretamente dentro do cabeçalho do **Painel de Inteligência**, o botão **"Exportar Anúncios (Excel)"** gera instantaneamente uma planilha `.xlsx` organizada com a **lista completa de anúncios da pesquisa** gerada 100% no navegador (sem chamadas a servidores externos ou dependências pesadas):
 - **Valores Monetários Formatados:** Preço de venda, repasse líquido, comissão ML, frete estimado e faturamento mensal todos devidamente formatados com `R$` (ex: `R$ 49,90`, `R$ 1.500,00`);
 - **Detalhamento Financeiro:** Percentuais de comissão e repasse (`%`), tipo de anúncio (Clássico/Premium) e modalidade logística (Full/Normal);
 - **Métricas de Performance:** Vendas totais, idade do anúncio, data de criação, giro diário estimado (`un./dia`), vendas mensais projetadas e estoque disponível;
