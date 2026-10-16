@@ -94,7 +94,8 @@ CalculadoraLivre/
 ├── background.js     # Service Worker para consultas em fila
 ├── styles.css        # Estilos com UI moderna na identidade Mercado Livre
 ├── popup.html        # Interface de configurações da extensão
-└── popup.js          # Lógica de persistência das configurações no chrome.storage
+├── popup.js          # Lógica de persistência das configurações no chrome.storage
+└── privacy.html      # Página oficial da Política de Privacidade (LGPD & Chrome Store)
 ```
 
 ---
@@ -104,6 +105,7 @@ CalculadoraLivre/
 - **100% Local:** Todos os cálculos e processamentos ocorrem estritamente no seu próprio navegador.
 - **Sem login ou senhas:** A extensão não solicita, não armazena e não envia dados pessoais, cookies, tokens ou credenciais a servidores externos.
 - **Código Aberto:** O código é transparente e pode ser auditado livremente por qualquer pessoa.
+- **Política de Privacidade Completa:** Consulte a nossa [Política de Privacidade oficial](privacy.html) em conformidade com a LGPD e as diretrizes para desenvolvedores da Chrome Web Store.
 
 ---
 
