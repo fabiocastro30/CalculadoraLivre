@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Calculadora Livre",
-  "version": "1.13.6",
+  "version": "1.14.0",
   "minimum_chrome_version": "111",
   "description": "Precificação, auditoria de margem e inteligência competitiva para vendedores do Mercado Livre.",
   "permissions": ["storage"],

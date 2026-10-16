@@ -363,6 +363,406 @@
 .cl-detail-list dt { color: var(--cl-muted); }
 .cl-detail-list dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 
+/* ==========================================================================
+   Painel IQV — Índice de Qualidade e Viabilidade
+   ========================================================================== */
+.cl-iqv-panel {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 14px 0 16px;
+  border: 1px solid rgba(0, 0, 0, .12);
+  border-radius: 8px;
+  padding: 14px 14px 12px;
+  background: var(--cl-white);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .06);
+  color: rgba(0, 0, 0, .9);
+  font-family: "Proxima Nova", -apple-system, Roboto, Arial, sans-serif;
+  transition: all .2s ease;
+}
+
+[data-testid="filters"] > .cl-iqv-panel,
+.items-filters-section .sidebar > .cl-iqv-panel {
+  margin: 0 0 16px;
+}
+
+.cl-iqv-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cl-iqv-header__text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cl-iqv-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cl-iqv-title {
+  margin: 0;
+  color: rgba(0, 0, 0, .9);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.cl-iqv-badge-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: rgba(52, 131, 250, .1);
+  color: var(--cl-blue-dark);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.cl-iqv-subtitle {
+  display: block;
+  margin-top: 2px;
+  color: rgba(0, 0, 0, .55);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+/* Indicador Principal (Circular Gauge) */
+.cl-iqv-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fbfbfb;
+  border: 1px solid rgba(0, 0, 0, .06);
+}
+
+.cl-iqv-gauge-wrapper {
+  position: relative;
+  flex: 0 0 74px;
+  width: 74px;
+  height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cl-iqv-gauge {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.cl-iqv-gauge__bg {
+  fill: none;
+  stroke: #eaeaea;
+  stroke-width: 6.5;
+}
+
+.cl-iqv-gauge__fill {
+  fill: none;
+  stroke-width: 6.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset .4s ease, stroke .3s ease;
+}
+
+.cl-iqv-gauge__inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1;
+}
+
+.cl-iqv-gauge__val {
+  color: rgba(0, 0, 0, .9);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -.5px;
+}
+
+.cl-iqv-gauge__max {
+  color: rgba(0, 0, 0, .45);
+  font-size: 9.5px;
+  font-weight: 600;
+  margin-top: 1px;
+}
+
+.cl-iqv-main__info {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cl-iqv-main__label {
+  display: inline-block;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.cl-iqv-main__desc {
+  margin-top: 3px;
+  color: rgba(0, 0, 0, .55);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* Indicadores Individuais por Ticket */
+.cl-iqv-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 10px;
+}
+
+.cl-iqv-tier-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cl-iqv-tier-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cl-iqv-tier-name-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cl-iqv-tier-name {
+  color: rgba(0, 0, 0, .85);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cl-iqv-tier-range {
+  color: rgba(0, 0, 0, .45);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.cl-iqv-tier-score-wrap {
+  flex: 0 0 auto;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cl-iqv-tier-score {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.cl-iqv-tier-max {
+  color: rgba(0, 0, 0, .45);
+  font-size: 10px;
+  font-weight: 500;
+  margin-left: 1px;
+}
+
+.cl-iqv-tier-nodata {
+  color: rgba(0, 0, 0, .45);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.cl-iqv-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #ececec;
+  overflow: hidden;
+}
+
+.cl-iqv-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width .35s ease, background-color .35s ease;
+}
+
+/* Footer / Resumo Inferior */
+.cl-iqv-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(0, 0, 0, .07);
+}
+
+.cl-iqv-count-text {
+  color: rgba(0, 0, 0, .6);
+  font-size: 11px;
+}
+
+.cl-iqv-count-text strong {
+  color: rgba(0, 0, 0, .85);
+}
+
+.cl-iqv-rel-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.cl-iqv-rel--high {
+  background: rgba(0, 166, 80, .12);
+  color: #08783d;
+}
+
+.cl-iqv-rel--medium {
+  background: #fff3cc;
+  color: #755500;
+}
+
+.cl-iqv-rel--low {
+  background: rgba(245, 121, 22, .12);
+  color: #c25400;
+}
+
+.cl-iqv-rel--none {
+  background: #ececec;
+  color: #666;
+}
+
+/* Seção Expansível "Ver detalhes" */
+.cl-iqv-details-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 5px;
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--cl-blue-dark);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+
+.cl-iqv-details-btn:hover {
+  background: rgba(52, 131, 250, .08);
+}
+
+.cl-iqv-chevron {
+  transition: transform .2s ease;
+}
+
+.cl-iqv-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.cl-iqv-details-pane {
+  display: none;
+  margin-top: 10px;
+  border-top: 1px dashed rgba(0, 0, 0, .1);
+  padding-top: 10px;
+  font-size: 11px;
+}
+
+.cl-iqv-details-pane.is-open {
+  display: block;
+}
+
+.cl-iqv-pilares {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.cl-iqv-pilar-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 1px solid rgba(0, 0, 0, .07);
+  border-radius: 6px;
+  padding: 5px 4px;
+  background: #fafafa;
+  text-align: center;
+}
+
+.cl-iqv-pilar-box span {
+  color: rgba(0, 0, 0, .55);
+  font-size: 9.5px;
+  line-height: 1.2;
+}
+
+.cl-iqv-pilar-box strong {
+  margin-top: 2px;
+  color: rgba(0, 0, 0, .85);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cl-iqv-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin-bottom: 8px;
+}
+
+.cl-iqv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+}
+
+.cl-iqv-table th {
+  padding: 5px 4px;
+  border-bottom: 1px solid rgba(0, 0, 0, .12);
+  color: rgba(0, 0, 0, .55);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.cl-iqv-table td {
+  padding: 5px 4px;
+  border-bottom: 1px solid rgba(0, 0, 0, .05);
+  color: rgba(0, 0, 0, .85);
+  white-space: nowrap;
+}
+
+.cl-iqv-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.cl-iqv-disclaimer {
+  margin-top: 6px;
+  color: rgba(0, 0, 0, .45);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
 /* Inteligência de mercado integrada aos filtros laterais */
 .cl-market-filters { width: 100%; margin: 18px 0 24px; border-top: 1px solid rgba(0, 0, 0, .1); border-bottom: 1px solid rgba(0, 0, 0, .1); padding: 18px 0; background: transparent; }
 [data-testid="filters"] > .cl-market-filters, .items-filters-section .sidebar > .cl-market-filters { width: 100%; margin: 0 0 28px; border: 0; border-bottom: 1px solid rgba(0, 0, 0, .12); padding: 0 0 24px; }

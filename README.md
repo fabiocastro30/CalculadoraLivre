@@ -49,6 +49,20 @@ Este projeto foi idealizado e desenvolvido por **Fabio Castro** com o objetivo d
   - *Mais recentes primeiro*
   - *Mais antigos primeiro*
 
+### 4. 🎯 Módulo IQV — Índice de Qualidade e Viabilidade Comercial (Novo!)
+Apresentado imediatamente acima dos filtros na barra lateral de buscas, o IQV consolida a atratividade comercial da palavra-chave pesquisada em quatro notas independentes de **0 a 100**:
+- **IQV Geral:** Score consolidado de todos os anúncios válidos ponderado pela quantidade de itens em cada faixa;
+- **IQV Ticket Baixo:** Anúncios com preço até R$ 50,00;
+- **IQV Ticket Médio:** Anúncios entre R$ 50,01 e R$ 99,99;
+- **IQV Ticket Alto:** Anúncios a partir de R$ 100,00.
+
+#### 📐 Metodologia Matemática dos 3 Pilares:
+1. **Giro Comercial (Peso 40%):** Mediana de vendas diárias estimada dos anúncios válidos ($SG = 100 \times \min(1, \ln(1 + G) / \ln(41))$);
+2. **Receita Bruta (Peso 35%):** Mediana do faturamento mensal estimado ($SF = 100 \times \min(1, \ln(1 + F) / \ln(50001))$);
+3. **Retorno Líquido Promocional (Peso 25%):** Mediana da margem de repasse líquido sobre o preço após comissões e frete ($SR = 100 \times \text{clamp}((R - 0.50) / 0.35, 0, 1)$).
+
+Possui medidor circular elegante, barras horizontais de progresso, indicação de confiabilidade da amostra e painel expansível com micro-tabela detalhada por ticket.
+
 ---
 
 ## 🛠️ Como Instalar no Google Chrome

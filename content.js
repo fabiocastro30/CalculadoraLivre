@@ -1099,6 +1099,452 @@
     values() { return [...this.items.values()]; }
   }
 
+  class IQVAnalysisEngine {
+    static CONFIG = Object.freeze({
+      WEIGHTS: {
+        GIRO: 0.40,
+        RECEITA: 0.35,
+        RETORNO: 0.25
+      },
+      REFERENCES: {
+        MAX_GIRO_DAILY: 40,
+        MAX_REVENUE_MONTHLY: 50000,
+        MIN_RETURN_RATIO: 0.50,
+        MAX_RETURN_RATIO: 0.85
+      },
+      TIERS: [
+        { id: "baixo", label: "Ticket Baixo", rangeLabel: "Até R$ 50", max: 50.00 },
+        { id: "medio", label: "Ticket Médio", rangeLabel: "R$ 50,01 a R$ 99,99", max: 99.999999 },
+        { id: "alto", label: "Ticket Alto", rangeLabel: "A partir de R$ 100", max: Infinity }
+      ]
+    });
+
+    static median(values) {
+      if (!Array.isArray(values) || values.length === 0) return null;
+      const valid = values.filter((v) => typeof v === "number" && Number.isFinite(v));
+      if (valid.length === 0) return null;
+      valid.sort((a, b) => a - b);
+      const mid = Math.floor(valid.length / 2);
+      return valid.length % 2 !== 0 ? valid[mid] : (valid[mid - 1] + valid[mid]) / 2;
+    }
+
+    static scoreGiro(G) {
+      if (G == null || !Number.isFinite(G) || G <= 0) return 0;
+      return 100 * Math.min(1, Math.log(1 + G) / Math.log(1 + this.CONFIG.REFERENCES.MAX_GIRO_DAILY));
+    }
+
+    static scoreReceita(F) {
+      if (F == null || !Number.isFinite(F) || F <= 0) return 0;
+      return 100 * Math.min(1, Math.log(1 + F) / Math.log(1 + this.CONFIG.REFERENCES.MAX_REVENUE_MONTHLY));
+    }
+
+    static scoreRetorno(R) {
+      if (R == null || !Number.isFinite(R)) return 0;
+      const { MIN_RETURN_RATIO, MAX_RETURN_RATIO } = this.CONFIG.REFERENCES;
+      const range = MAX_RETURN_RATIO - MIN_RETURN_RATIO;
+      return 100 * clamp((R - MIN_RETURN_RATIO) / range, 0, 1);
+    }
+
+    static scoreTier(sg, sf, sr) {
+      const { GIRO, RECEITA, RETORNO } = this.CONFIG.WEIGHTS;
+      return clamp((sg * GIRO) + (sf * RECEITA) + (sr * RETORNO), 0, 100);
+    }
+
+    static getTierId(price) {
+      if (!Number.isFinite(price) || price <= 50.00) return "baixo";
+      if (price < 100.00) return "medio";
+      return "alto";
+    }
+
+    static getClassification(score) {
+      if (score == null || !Number.isFinite(score)) return { label: "Dados insuficientes", color: "#737373", class: "none" };
+      if (score < 20) return { label: "Muito baixa", color: "#f23d4f", class: "low" };
+      if (score < 40) return { label: "Baixa", color: "#f57916", class: "low" };
+      if (score < 60) return { label: "Moderada", color: "#d97706", class: "medium" };
+      if (score < 80) return { label: "Boa", color: "#00a650", class: "high" };
+      return { label: "Muito alta", color: "#007a37", class: "high" };
+    }
+
+    static analyze(items, calculationFn) {
+      const totalAds = items.length;
+      let loadingCount = 0;
+      let estimatedDatesCount = 0;
+
+      const tiers = {
+        baixo: { config: this.CONFIG.TIERS[0], all: [], valid: [] },
+        medio: { config: this.CONFIG.TIERS[1], all: [], valid: [] },
+        alto: { config: this.CONFIG.TIERS[2], all: [], valid: [] }
+      };
+
+      items.forEach((item) => {
+        if (!item?.card?.isConnected) return;
+        if (item.advancedState === "queued" || item.advancedState === "loading") loadingCount += 1;
+        const price = asNumber(item.data?.price);
+        if (price <= 0) return;
+        const tierId = this.getTierId(price);
+        const tier = tiers[tierId];
+        tier.all.push(item);
+
+        const hasGiro = item.advanced?.salesPerDay != null && Number.isFinite(item.advanced.salesPerDay) && item.advanced.salesPerDay >= 0;
+        if (hasGiro) {
+          tier.valid.push(item);
+          if (item.advanced.creationDateIsEstimated) estimatedDatesCount += 1;
+        }
+      });
+
+      const tierResults = {};
+      let totalEvaluated = 0;
+      let weightedScoreSum = 0;
+      let totalWeight = 0;
+
+      for (const [tierId, tier] of Object.entries(tiers)) {
+        const validCount = tier.valid.length;
+        totalEvaluated += validCount;
+
+        if (validCount === 0) {
+          tierResults[tierId] = {
+            id: tierId,
+            label: tier.config.label,
+            rangeLabel: tier.config.rangeLabel,
+            hasData: false,
+            validCount: 0,
+            totalCount: tier.all.length,
+            score: null,
+            sg: null,
+            sf: null,
+            sr: null,
+            medianGiro: null,
+            medianRevenue: null,
+            medianReturnRatio: null,
+            medianPayout: null,
+            classification: { label: "Dados insuficientes", color: "#737373" }
+          };
+          continue;
+        }
+
+        // Prioriza anúncios orgânicos para diminuir distorção por posicionamento patrocinado (se amostra >= 3)
+        const organicValid = tier.valid.filter((it) => !it.data?.isSponsored);
+        const sample = organicValid.length >= 3 ? organicValid : tier.valid;
+
+        const medianGiro = this.median(sample.map((it) => it.advanced.salesPerDay));
+        const medianRevenue = this.median(sample.map((it) => it.advanced.monthlyRevenue ?? (it.advanced.salesPerDay * 30 * it.data.price)));
+
+        const returnRatios = sample.map((it) => {
+          const calc = calculationFn(it.data);
+          return it.data.price > 0 ? (calc.netPayout / it.data.price) : 0;
+        });
+        const payouts = sample.map((it) => calculationFn(it.data).netPayout);
+        const medianReturnRatio = this.median(returnRatios);
+        const medianPayout = this.median(payouts);
+
+        const sg = this.scoreGiro(medianGiro);
+        const sf = this.scoreReceita(medianRevenue);
+        const sr = this.scoreRetorno(medianReturnRatio);
+        const tScore = this.scoreTier(sg, sf, sr);
+
+        tierResults[tierId] = {
+          id: tierId,
+          label: tier.config.label,
+          rangeLabel: tier.config.rangeLabel,
+          hasData: true,
+          validCount,
+          totalCount: tier.all.length,
+          score: tScore,
+          sg,
+          sf,
+          sr,
+          medianGiro,
+          medianRevenue,
+          medianReturnRatio,
+          medianPayout,
+          classification: this.getClassification(tScore)
+        };
+
+        weightedScoreSum += tScore * validCount;
+        totalWeight += validCount;
+      }
+
+      const generalScore = totalWeight > 0 ? (weightedScoreSum / totalWeight) : null;
+      const generalClassification = this.getClassification(generalScore);
+
+      let state = "available";
+      let reliability = "none";
+      let reliabilityLabel = "Nenhuma";
+
+      if (totalAds === 0) {
+        state = "empty";
+      } else if (totalEvaluated === 0) {
+        state = loadingCount > 0 ? "analyzing" : "insufficient";
+      } else if (totalEvaluated < 5) {
+        state = "preview";
+        reliability = "low";
+        reliabilityLabel = "Baixa";
+      } else if (totalEvaluated < 15) {
+        state = "available";
+        reliability = "medium";
+        reliabilityLabel = "Média";
+      } else {
+        state = "available";
+        const estimatedRatio = estimatedDatesCount / totalEvaluated;
+        if (estimatedRatio > 0.70) {
+          reliability = "medium";
+          reliabilityLabel = "Média (datas estimadas)";
+        } else {
+          reliability = "high";
+          reliabilityLabel = "Alta";
+        }
+      }
+
+      return {
+        state,
+        generalScore,
+        generalClassification,
+        tiers: tierResults,
+        totalEvaluated,
+        totalAds,
+        loadingCount,
+        reliability,
+        reliabilityLabel
+      };
+    }
+  }
+
+  class IQVPanelInjector {
+    constructor(settings, cards) {
+      this.settings = settings;
+      this.cards = cards;
+      this.root = null;
+      this.detailsOpen = false;
+      this.debouncedUpdate = debounce(() => this.executeUpdate(), 160);
+      this.lastSignature = "";
+    }
+
+    mount() {
+      const isOffers = /^\/ofertas(?:\/|$)/i.test(location.pathname);
+      if (isOffers) {
+        document.querySelector("#calculadora-livre-iqv")?.remove();
+        this.root = null;
+        return;
+      }
+      const existing = document.querySelector("#calculadora-livre-iqv");
+      this.root = existing ?? document.createElement("section");
+      this.root.id = "calculadora-livre-iqv";
+      this.root.className = "cl-root cl-iqv-panel";
+
+      const searchbar = document.querySelector("#calculadora-livre-searchbar");
+      if (searchbar && searchbar.isConnected) {
+        if (this.root.parentElement !== searchbar.parentElement || this.root.nextElementSibling !== searchbar) {
+          searchbar.before(this.root);
+        }
+      } else {
+        const offersSidebar = document.querySelector("[data-testid='filters'], .items-filters-section .sidebar");
+        const filters = document.querySelector(".ui-search-filter-groups") ?? offersSidebar?.querySelector(".qcat-filters");
+        const sidebar = document.querySelector(".ui-search-sidebar") ?? offersSidebar;
+        const offersList = document.querySelector("[data-testid='items-list']");
+        if (!filters && !sidebar && !offersList) return;
+
+        if (filters && (this.root.parentElement !== filters.parentElement || this.root.nextElementSibling !== filters)) {
+          filters.before(this.root);
+        } else if (!filters && sidebar && sidebar.firstElementChild !== this.root) {
+          sidebar.prepend(this.root);
+        } else if (!filters && !sidebar && this.root.nextElementSibling !== offersList) {
+          offersList.before(this.root);
+        }
+      }
+      if (!existing) this.render();
+    }
+
+    update() {
+      this.debouncedUpdate();
+    }
+
+    executeUpdate() {
+      this.mount();
+      if (!this.root?.isConnected) return;
+      this.render();
+    }
+
+    render() {
+      if (!this.root) return;
+      const items = this.cards.values();
+      const analysis = IQVAnalysisEngine.analyze(items, (data) => this.cards.calculation(data));
+
+      const signature = `${analysis.state}|${analysis.generalScore?.toFixed(1)}|${analysis.totalEvaluated}|${analysis.totalAds}|${this.detailsOpen}`;
+      if (this.lastSignature === signature && this.root.children.length > 0) return;
+      this.lastSignature = signature;
+
+      const hasGeneral = analysis.generalScore != null && Number.isFinite(analysis.generalScore);
+      const scoreNum = hasGeneral ? analysis.generalScore : 0;
+      const scoreFormatted = hasGeneral ? number.format(scoreNum) : "—";
+      const tierColor = analysis.generalClassification.color;
+      const tierLabel = analysis.generalClassification.label;
+
+      const circumference = 226.19; // 2 * PI * 36
+      const dashoffset = hasGeneral ? circumference * (1 - clamp(scoreNum, 0, 100) / 100) : circumference;
+
+      const tiersHtml = ["baixo", "medio", "alto"].map((tierId) => {
+        const t = analysis.tiers[tierId];
+        const tHasData = t.hasData && t.score != null;
+        const tScoreFormatted = tHasData ? number.format(t.score) : "";
+        const tColor = tHasData ? t.classification.color : "#999";
+        const fillWidth = tHasData ? clamp(t.score, 0, 100) : 0;
+        return `<div class="cl-iqv-tier-row">
+          <div class="cl-iqv-tier-row__head">
+            <div class="cl-iqv-tier-name-wrap">
+              <span class="cl-iqv-tier-name">${escapeHtml(t.label)}</span>
+              <span class="cl-iqv-tier-range">(${escapeHtml(t.rangeLabel)})</span>
+            </div>
+            <div class="cl-iqv-tier-score-wrap">
+              ${tHasData ? `<strong class="cl-iqv-tier-score" style="color: ${tColor}">${tScoreFormatted}</strong><small class="cl-iqv-tier-max">/100</small>` : `<span class="cl-iqv-tier-nodata">Dados insuficientes</span>`}
+            </div>
+          </div>
+          <div class="cl-iqv-progress-track">
+            <div class="cl-iqv-progress-fill" style="width: ${fillWidth}%; background-color: ${tColor};"></div>
+          </div>
+        </div>`;
+      }).join("");
+
+      const tableRowsHtml = ["baixo", "medio", "alto"].map((tierId) => {
+        const t = analysis.tiers[tierId];
+        if (!t.hasData) {
+          return `<tr>
+            <td><strong>${escapeHtml(t.label)}</strong></td>
+            <td>0 / ${t.totalCount}</td>
+            <td colspan="4" style="color: var(--cl-muted); font-style: italic;">Dados insuficientes no momento</td>
+          </tr>`;
+        }
+        return `<tr>
+          <td><strong>${escapeHtml(t.label)}</strong></td>
+          <td>${t.validCount} / ${t.totalCount}</td>
+          <td>${number.format(t.medianGiro)}/d</td>
+          <td>${money.format(t.medianRevenue)}</td>
+          <td>${(t.medianReturnRatio * 100).toFixed(1)}%</td>
+          <td>${money.format(t.medianPayout)}</td>
+        </tr>`;
+      }).join("");
+
+      const mainIndicatorHtml = analysis.state === "analyzing"
+        ? `<div class="cl-iqv-main">
+            <div class="cl-iqv-gauge-wrapper">
+              <svg viewBox="0 0 88 88" class="cl-iqv-gauge">
+                <circle class="cl-iqv-gauge__bg" cx="44" cy="44" r="36" />
+                <circle class="cl-iqv-gauge__fill" cx="44" cy="44" r="36" stroke="#3483fa" stroke-dasharray="226.19" stroke-dashoffset="150" />
+              </svg>
+              <div class="cl-iqv-gauge__inner"><span class="cl-iqv-gauge__val" style="font-size: 13px;">...</span></div>
+            </div>
+            <div class="cl-iqv-main__info">
+              <div class="cl-iqv-main__label" style="color: var(--cl-blue);">Analisando anúncios...</div>
+              <div class="cl-iqv-main__desc">Calculando giro, receita e repasse da lista</div>
+            </div>
+          </div>`
+        : `<div class="cl-iqv-main">
+            <div class="cl-iqv-gauge-wrapper">
+              <svg viewBox="0 0 88 88" class="cl-iqv-gauge">
+                <circle class="cl-iqv-gauge__bg" cx="44" cy="44" r="36" />
+                <circle class="cl-iqv-gauge__fill" cx="44" cy="44" r="36" stroke="${tierColor}" stroke-dasharray="226.19" stroke-dashoffset="${dashoffset}" />
+              </svg>
+              <div class="cl-iqv-gauge__inner">
+                <span class="cl-iqv-gauge__val">${scoreFormatted}</span>
+                ${hasGeneral ? '<span class="cl-iqv-gauge__max">/ 100</span>' : ''}
+              </div>
+            </div>
+            <div class="cl-iqv-main__info">
+              <div class="cl-iqv-main__label" style="color: ${tierColor}">${tierLabel}</div>
+              <div class="cl-iqv-main__desc">${hasGeneral ? "Atratividade comercial ponderada da pesquisa" : "Aguardando histórico comercial suficiente dos anúncios"}</div>
+            </div>
+          </div>`;
+
+      this.root.innerHTML = `
+        <div class="cl-iqv-header">
+          <div class="cl-iqv-header__text">
+            <div class="cl-iqv-title-row">
+              <h2 class="cl-iqv-title">IQV — Qualidade e Viabilidade</h2>
+              <span class="cl-iqv-badge-tag">Índice Comercial</span>
+            </div>
+            <span class="cl-iqv-subtitle">Atratividade estimada desta pesquisa</span>
+          </div>
+        </div>
+
+        ${mainIndicatorHtml}
+
+        <div class="cl-iqv-tiers">
+          ${tiersHtml}
+        </div>
+
+        <div class="cl-iqv-footer">
+          <span class="cl-iqv-count-text">
+            <strong>${analysis.totalEvaluated}</strong> de <strong>${analysis.totalAds}</strong> avaliados
+          </span>
+          <span class="cl-iqv-rel-badge cl-iqv-rel--${analysis.reliability}">
+            Confiabilidade ${analysis.reliabilityLabel}
+          </span>
+        </div>
+
+        <button type="button" class="cl-iqv-details-btn" data-iqv-toggle>
+          <span>${this.detailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</span>
+          <svg class="cl-iqv-chevron ${this.detailsOpen ? 'is-open' : ''}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+
+        <div class="cl-iqv-details-pane ${this.detailsOpen ? 'is-open' : ''}">
+          <div class="cl-iqv-pilares">
+            <div class="cl-iqv-pilar-box">
+              <span>Giro Comercial</span>
+              <strong>40%</strong>
+            </div>
+            <div class="cl-iqv-pilar-box">
+              <span>Receita Bruta</span>
+              <strong>35%</strong>
+            </div>
+            <div class="cl-iqv-pilar-box">
+              <span>Retorno Líquido</span>
+              <strong>25%</strong>
+            </div>
+          </div>
+
+          <div class="cl-iqv-table-wrap">
+            <table class="cl-iqv-table">
+              <thead>
+                <tr>
+                  <th>Ticket</th>
+                  <th>Amostra</th>
+                  <th>Giro</th>
+                  <th>Receita</th>
+                  <th>Retorno</th>
+                  <th>Repasse</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRowsHtml}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="cl-iqv-disclaimer">
+            Baseado na mediana dos anúncios da pesquisa. Não deduz impostos individuais, custo do produto ou publicidade real do vendedor.
+          </div>
+        </div>
+      `;
+
+      this.bind();
+    }
+
+    bind() {
+      const btn = this.root.querySelector("[data-iqv-toggle]");
+      btn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.detailsOpen = !this.detailsOpen;
+        const pane = this.root.querySelector(".cl-iqv-details-pane");
+        const chevron = this.root.querySelector(".cl-iqv-chevron");
+        const label = btn.querySelector("span");
+        if (pane) pane.classList.toggle("is-open", this.detailsOpen);
+        if (chevron) chevron.classList.toggle("is-open", this.detailsOpen);
+        if (label) label.textContent = this.detailsOpen ? "Ocultar detalhes" : "Ver detalhes";
+        this.lastSignature = "";
+      });
+    }
+  }
+
   class SearchTopBarInjector {
     constructor(settings, cards) { this.settings = settings; this.cards = cards; this.root = null; this.sortMode = "default"; }
     mount() {
@@ -1118,9 +1564,17 @@
       this.root = existing ?? document.createElement("section");
       this.root.id = "calculadora-livre-searchbar";
       this.root.className = `cl-root cl-market-filters${offersList && !sidebar ? " cl-market-filters--offers" : ""}`;
-      if (filters && (this.root.parentElement !== filters.parentElement || this.root.nextElementSibling !== filters)) filters.before(this.root);
-      else if (!filters && sidebar && sidebar.firstElementChild !== this.root) sidebar.prepend(this.root);
-      else if (!filters && !sidebar && this.root.nextElementSibling !== offersList) offersList.before(this.root);
+
+      const iqv = document.querySelector("#calculadora-livre-iqv");
+      if (iqv && iqv.isConnected) {
+        if (this.root.previousElementSibling !== iqv) iqv.after(this.root);
+      } else if (filters && (this.root.parentElement !== filters.parentElement || this.root.nextElementSibling !== filters)) {
+        filters.before(this.root);
+      } else if (!filters && sidebar && sidebar.firstElementChild !== this.root) {
+        sidebar.prepend(this.root);
+      } else if (!filters && !sidebar && this.root.nextElementSibling !== offersList) {
+        offersList.before(this.root);
+      }
       if (!existing) this.render();
     }
     render() {
@@ -1181,20 +1635,26 @@
     const hasProductStructure = Boolean(document.querySelector("#buybox-form, form.ui-pdp-buybox, .ui-pdp-price__second-line, [data-testid='price-part'], .ui-pdp-container__col.col-1.ui-pdp-container--column-right, #main_actions"));
     const isOffers = /^\/ofertas(?:\/|$)/i.test(location.pathname);
     const isSearch = !hasProductStructure && (isOffers || location.hostname.startsWith("lista.") || Boolean(document.querySelector(CARD_SELECTOR)));
-    let pdp, cards, topbar;
+    let pdp, cards, topbar, iqv;
     if (isSearch) {
       await new Promise((resolve) => {
         const start = () => setTimeout(resolve, 1200);
         if (document.readyState === "complete") start();
         else window.addEventListener("load", start, { once: true });
       });
-      document.querySelectorAll("#calculadora-livre-searchbar, .cl-poly").forEach((node) => node.remove());
+      document.querySelectorAll("#calculadora-livre-searchbar, #calculadora-livre-iqv, .cl-poly").forEach((node) => node.remove());
       document.querySelectorAll("[data-calculadora-livre-ready]").forEach((node) => node.removeAttribute("data-calculadora-livre-ready"));
-      cards = new SearchPolycardInjector(settings, registry, () => topbar?.update());
+      cards = new SearchPolycardInjector(settings, registry, () => {
+        topbar?.update();
+        iqv?.update();
+      });
       topbar = new SearchTopBarInjector(settings, cards);
+      iqv = new IQVPanelInjector(settings, cards);
       topbar.mount();
+      iqv.mount();
       cards.observe();
       topbar.update();
+      iqv.update();
     } else {
       pdp = new PdpWidgetInjector(settings, registry); pdp.observe();
     }
@@ -1203,6 +1663,7 @@
       if (pdp) { pdp.settings = settings; if (pdp.root) pdp.render(); }
       if (cards) { cards.settings = settings; cards.values().forEach((item) => cards.render(item)); }
       if (topbar) { topbar.settings = settings; topbar.update(); }
+      if (iqv) { iqv.settings = settings; iqv.update(); }
     });
   }
 
