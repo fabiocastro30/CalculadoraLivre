@@ -924,6 +924,7 @@
       this.queue = [];
       this.queued = new Set();
       this.processing = false;
+      this.debouncedUpdate = debounce(() => this.onUpdate?.(), 100);
       this.registry.subscribe(() => this.syncStructured());
     }
     commission(data) { return data.listingTypeId === "gold_pro" ? this.settings.premiumCommission : this.settings.classicCommission; }
@@ -959,10 +960,7 @@
       this.applyStructured(item);
       this.render(item);
       this.visibilityObserver?.observe(card);
-      requestAnimationFrame(() => {
-        panel.getBoundingClientRect();
-        this.onUpdate?.();
-      });
+      this.debouncedUpdate();
     }
     render(item) {
       const { data, panel } = item;
@@ -1015,7 +1013,7 @@
       this.items.forEach((item) => {
         if (this.applyStructured(item)) { this.render(item); changed = true; }
       });
-      if (changed) this.onUpdate?.();
+      if (changed) this.debouncedUpdate();
     }
 
     enqueue(item, force = false) {
@@ -1062,7 +1060,7 @@
           console.debug(`${APP}: inteligência indisponível para ${item.data.permalink}`, error);
         }
         this.render(item);
-        this.onUpdate?.();
+        this.debouncedUpdate();
       }
       this.processing = false;
     }
@@ -1087,17 +1085,13 @@
         });
       }, { rootMargin: "280px 0px", threshold: 0.01 });
       this.scan();
-      const refresh = debounce(() => { this.scan(); this.onUpdate?.(); }, 350);
+      const refresh = debounce(() => { this.scan(); this.debouncedUpdate(); }, 350);
       this.observer = new MutationObserver((records) => {
         const hasExternalChange = records.some((record) => !(record.target instanceof Element) || !record.target.closest(".cl-root"));
         if (hasExternalChange) refresh();
       });
       this.observer.observe(document.body, { childList: true, subtree: true });
-      let pass = 0;
-      const warmup = setInterval(() => {
-        this.scan(); this.onUpdate?.(); pass += 1;
-        if (pass >= 8) clearInterval(warmup);
-      }, 800);
+      setTimeout(() => { this.scan(); this.debouncedUpdate(); }, 1200);
     }
     values() { return [...this.items.values()]; }
   }
@@ -1720,6 +1714,521 @@
     }
   }
 
+  class CalculadoraLivreXlsxExporter {
+    static crcTable = (() => {
+      const t = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        t[i] = c >>> 0;
+      }
+      return t;
+    })();
+
+    static crc32(buf) {
+      let crc = -1;
+      const table = this.crcTable;
+      for (let i = 0; i < buf.length; i++) crc = (crc >>> 8) ^ table[(crc ^ buf[i]) & 0xFF];
+      return (crc ^ -1) >>> 0;
+    }
+
+    static escapeXml(str) {
+      if (str == null) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+    }
+
+    static colLetter(colIdx) {
+      let temp, letter = "";
+      while (colIdx > 0) {
+        temp = (colIdx - 1) % 26;
+        letter = String.fromCharCode(65 + temp) + letter;
+        colIdx = Math.floor((colIdx - temp - 1) / 26);
+      }
+      return letter;
+    }
+
+    static createZip(files) {
+      const encoder = new TextEncoder();
+      const fileRecords = [];
+      let offset = 0;
+      const parts = [];
+
+      for (const file of files) {
+        const data = typeof file.content === "string" ? encoder.encode(file.content) : file.content;
+        const nameBuf = encoder.encode(file.name);
+        const crc = this.crc32(data);
+        const size = data.length;
+
+        const localHeader = new Uint8Array(30 + nameBuf.length);
+        const view = new DataView(localHeader.buffer);
+        view.setUint32(0, 0x04034b50, true);
+        view.setUint16(4, 20, true);
+        view.setUint16(6, 0, true);
+        view.setUint16(8, 0, true);
+        view.setUint16(10, 0, true);
+        view.setUint16(12, 0, true);
+        view.setUint32(14, crc, true);
+        view.setUint32(18, size, true);
+        view.setUint32(22, size, true);
+        view.setUint16(26, nameBuf.length, true);
+        view.setUint16(28, 0, true);
+        localHeader.set(nameBuf, 30);
+
+        fileRecords.push({ nameBuf, crc, size, offset });
+        parts.push(localHeader, data);
+        offset += localHeader.length + size;
+      }
+
+      const centralDirOffset = offset;
+      let centralDirSize = 0;
+
+      for (const rec of fileRecords) {
+        const cdHeader = new Uint8Array(46 + rec.nameBuf.length);
+        const view = new DataView(cdHeader.buffer);
+        view.setUint32(0, 0x02014b50, true);
+        view.setUint16(4, 20, true);
+        view.setUint16(6, 20, true);
+        view.setUint16(8, 0, true);
+        view.setUint16(10, 0, true);
+        view.setUint16(12, 0, true);
+        view.setUint16(14, 0, true);
+        view.setUint32(16, rec.crc, true);
+        view.setUint32(20, rec.size, true);
+        view.setUint32(24, rec.size, true);
+        view.setUint16(28, rec.nameBuf.length, true);
+        view.setUint16(30, 0, true);
+        view.setUint16(32, 0, true);
+        view.setUint16(34, 0, true);
+        view.setUint16(36, 0, true);
+        view.setUint32(38, 0, true);
+        view.setUint32(42, rec.offset, true);
+        cdHeader.set(rec.nameBuf, 46);
+
+        parts.push(cdHeader);
+        centralDirSize += cdHeader.length;
+      }
+
+      const eocd = new Uint8Array(22);
+      const eocdView = new DataView(eocd.buffer);
+      eocdView.setUint32(0, 0x06054b50, true);
+      eocdView.setUint16(4, 0, true);
+      eocdView.setUint16(6, 0, true);
+      eocdView.setUint16(8, fileRecords.length, true);
+      eocdView.setUint16(10, fileRecords.length, true);
+      eocdView.setUint32(12, centralDirSize, true);
+      eocdView.setUint32(16, centralDirOffset, true);
+      eocdView.setUint16(20, 0, true);
+      parts.push(eocd);
+
+      const totalLen = parts.reduce((acc, p) => acc + p.length, 0);
+      const result = new Uint8Array(totalLen);
+      let curPos = 0;
+      for (const p of parts) {
+        result.set(p, curPos);
+        curPos += p.length;
+      }
+      return result;
+    }
+
+    static buildSheetXml(rows) {
+      let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">\n<sheetData>\n';
+      rows.forEach((row, rowIdx) => {
+        const rNum = rowIdx + 1;
+        xml += `<row r="${rNum}">\n`;
+        row.forEach((cell, colIdx) => {
+          const cRef = this.colLetter(colIdx + 1) + rNum;
+          if (cell == null || cell === "") return;
+          let val = cell;
+          let isHeader = false;
+          if (typeof cell === "object" && cell !== null && "v" in cell) {
+            val = cell.v;
+            if (cell.bold) isHeader = true;
+          }
+          const isNum = typeof val === "number" && Number.isFinite(val);
+          const styleAttr = isHeader ? ' s="1"' : "";
+          if (isNum) {
+            xml += `<c r="${cRef}"${styleAttr} t="n"><v>${val}</v></c>\n`;
+          } else {
+            xml += `<c r="${cRef}"${styleAttr} t="inlineStr"><is><t>${this.escapeXml(val)}</t></is></c>\n`;
+          }
+        });
+        xml += '</row>\n';
+      });
+      xml += '</sheetData>\n</worksheet>';
+      return xml;
+    }
+
+    static buildWorkbook(sheets) {
+      const files = [];
+
+      let ct = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n<Default Extension="xml" ContentType="application/xml"/>\n<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>\n<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>\n';
+      sheets.forEach((_, idx) => {
+        ct += `<Override PartName="/xl/worksheets/sheet${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>\n`;
+      });
+      ct += '</Types>';
+      files.push({ name: '[Content_Types].xml', content: ct });
+
+      files.push({
+        name: '_rels/.rels',
+        content: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>\n</Relationships>'
+      });
+
+      let wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n';
+      sheets.forEach((_, idx) => {
+        wbRels += `<Relationship Id="rId${idx + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${idx + 1}.xml"/>\n`;
+      });
+      wbRels += `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>\n</Relationships>`;
+      files.push({ name: 'xl/_rels/workbook.xml.rels', content: wbRels });
+
+      let wb = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">\n<sheets>\n';
+      sheets.forEach((s, idx) => {
+        wb += `<sheet name="${this.escapeXml(s.name)}" sheetId="${idx + 1}" r:id="rId${idx + 1}"/>\n`;
+      });
+      wb += '</sheets>\n</workbook>';
+      files.push({ name: 'xl/workbook.xml', content: wb });
+
+      const stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">\n<fonts count="2">\n<font><name val="Calibri"/><sz val="11"/></font>\n<font><b/><name val="Calibri"/><sz val="11"/></font>\n</fonts>\n<fills count="3">\n<fill><patternFill patternType="none"/></fill>\n<fill><patternFill patternType="gray125"/></fill>\n<fill><patternFill patternType="solid"><fgColor rgb="FFF2F2F2"/></patternFill></fill>\n</fills>\n<borders count="1">\n<border><left/><right/><top/><bottom/><diagonal/></border>\n</borders>\n<cellStyleXfs count="1">\n<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>\n</cellStyleXfs>\n<cellXfs count="2">\n<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>\n<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>\n</cellXfs>\n</styleSheet>';
+      files.push({ name: 'xl/styles.xml', content: stylesXml });
+
+      sheets.forEach((s, idx) => {
+        files.push({
+          name: `xl/worksheets/sheet${idx + 1}.xml`,
+          content: this.buildSheetXml(s.rows)
+        });
+      });
+
+      return this.createZip(files);
+    }
+
+    static showProgressModal() {
+      document.querySelector("#cl-export-modal-backdrop")?.remove();
+      const backdrop = document.createElement("div");
+      backdrop.id = "cl-export-modal-backdrop";
+      backdrop.className = "cl-export-backdrop";
+      backdrop.innerHTML = `
+        <div class="cl-export-modal" role="dialog" aria-modal="true" aria-labelledby="cl-exp-title">
+          <div class="cl-export-modal__header">
+            <span class="cl-export-modal__icon">📊</span>
+            <div>
+              <h3 id="cl-exp-title" class="cl-export-modal__title">Exportando Análise Comercial</h3>
+              <span class="cl-export-modal__subtitle">Calculadora Livre • Gerando planilha Excel com 6 abas</span>
+            </div>
+          </div>
+          <div class="cl-export-modal__body">
+            <div class="cl-export-progress-wrap">
+              <div class="cl-export-progress-bar" id="cl-export-bar" style="width: 5%;"></div>
+            </div>
+            <div class="cl-export-status">
+              <span class="cl-export-status__text" id="cl-export-status-text">Iniciando processamento dos dados...</span>
+              <strong class="cl-export-status__pct" id="cl-export-pct">5%</strong>
+            </div>
+            <div class="cl-export-checklist">
+              <div class="cl-export-chk" id="cl-chk-1">⏳ 1. Visão de Mercado (Radar de Demanda)</div>
+              <div class="cl-export-chk" id="cl-chk-2">⏳ 2. Preços e Tickets (Eficiência das Faixas)</div>
+              <div class="cl-export-chk" id="cl-chk-3">⏳ 3. Concorrência e Concentração (Líderes)</div>
+              <div class="cl-export-chk" id="cl-chk-4">⏳ 4. Novos Entrantes (Sinais de Alto Giro)</div>
+              <div class="cl-export-chk" id="cl-chk-5">⏳ 5. Simulador Operacional e Cenários</div>
+              <div class="cl-export-chk" id="cl-chk-6">⏳ 6. Listagem Completa de Anúncios</div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(backdrop);
+      return backdrop;
+    }
+
+    static updateProgress(pct, message, activeStep) {
+      const bar = document.querySelector("#cl-export-bar");
+      const text = document.querySelector("#cl-export-status-text");
+      const pctEl = document.querySelector("#cl-export-pct");
+      if (bar) bar.style.width = `${pct}%`;
+      if (text) text.textContent = message;
+      if (pctEl) pctEl.textContent = `${pct}%`;
+      if (activeStep != null) {
+        for (let i = 1; i <= 6; i++) {
+          const chk = document.querySelector(`#cl-chk-${i}`);
+          if (!chk) continue;
+          if (i < activeStep) {
+            chk.className = "cl-export-chk is-done";
+            chk.textContent = chk.textContent.replace(/^[⏳⚡]/, "✅");
+          } else if (i === activeStep) {
+            chk.className = "cl-export-chk is-active";
+            chk.textContent = chk.textContent.replace(/^[⏳]/, "⚡");
+          }
+        }
+      }
+    }
+
+    static async runExport({ cards, settings, iqvAnalysis, simForm }) {
+      const modal = this.showProgressModal();
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      try {
+        await sleep(100);
+        this.updateProgress(15, "Processando Visão Geral e Radar de Demanda...", 1);
+        await sleep(120);
+
+        const allItems = cards.values();
+        const analysis = iqvAnalysis || IQVAnalysisEngine.analyze(allItems, (d) => cards.calculation(d));
+        const demand = MarketIntelligenceEngine.calculateDemand(allItems);
+        const ticketMedians = {
+          baixo: IQVAnalysisEngine.median(allItems.filter((it) => IQVAnalysisEngine.getTierId(it.data.price) === "baixo").map((it) => it.advanced?.salesPerDay).filter(Boolean)) || 1,
+          medio: IQVAnalysisEngine.median(allItems.filter((it) => IQVAnalysisEngine.getTierId(it.data.price) === "medio").map((it) => it.advanced?.salesPerDay).filter(Boolean)) || 1,
+          alto: IQVAnalysisEngine.median(allItems.filter((it) => IQVAnalysisEngine.getTierId(it.data.price) === "alto").map((it) => it.advanced?.salesPerDay).filter(Boolean)) || 1
+        };
+
+        // Aba 1: Visão de Mercado
+        const sheet1Rows = [
+          [{ v: "CALCULADORA LIVRE — VISÃO GERAL DE MERCADO & RADAR DE DEMANDA", bold: true }],
+          ["Data da Análise", new Date().toLocaleString("pt-BR")],
+          ["Termo Pesquisado", document.querySelector("input.nav-search-input")?.value || document.title.split("|")[0].trim() || "Busca no Mercado Livre"],
+          ["Total de Anúncios na Página", analysis.totalAds],
+          ["Anúncios Consolidados", analysis.totalEvaluated],
+          ["Confiabilidade da Amostra", analysis.reliabilityLabel],
+          ["Nota IQV Geral (0-100)", analysis.generalScore ? Number(analysis.generalScore.toFixed(1)) : 0],
+          ["Classificação Geral", analysis.generalClassification?.label || "—"],
+          [],
+          [{ v: "MÉTRICAS AGREGADAS DE DEMANDA", bold: true }],
+          ["Giro Diário Agregado (un/dia)", demand.totalGiro],
+          ["Giro Diário Mediano (un/dia)", demand.medianGiro],
+          ["Faturamento Mensal Agregado da Amostra (R$)", demand.totalRevenue],
+          ["Faturamento Mensal Mediano (R$)", demand.medianRevenue],
+          ["Giro Percentil 25 (Conservador - un/dia)", demand.p25],
+          ["Giro Percentil 50 (Mediano de Referência - un/dia)", demand.p50],
+          ["Giro Percentil 75 (Expansivo - un/dia)", demand.p75],
+          [],
+          [{ v: "DISTRIBUIÇÃO DE VELOCIDADE DE VENDAS", bold: true }],
+          [{ v: "Faixa de Velocidade", bold: true }, { v: "Quantidade de Anúncios", bold: true }, { v: "Participação (%)", bold: true }],
+          ...demand.brackets.map((b) => [b.label, b.count, demand.validCount > 0 ? Number((b.count / demand.validCount * 100).toFixed(1)) : 0]),
+          [],
+          [{ v: "COMPARATIVO POR FAIXA DE TICKET", bold: true }],
+          [{ v: "Ticket", bold: true }, { v: "Anúncios Válidos", bold: true }, { v: "Giro Mediano (un/dia)", bold: true }, { v: "Faturamento Mediano (R$)", bold: true }, { v: "Share de Giro (%)", bold: true }],
+          ...demand.tiers.map((t) => [t.label, t.validCount, t.medianGiro, t.medianRevenue, Number(t.giroShare.toFixed(1))]),
+          [],
+          [{ v: "DIAGNÓSTICO E INSIGHT COMERCIAL", bold: true }],
+          [demand.insight.replace(/<[^>]*>/g, "")]
+        ];
+
+        // Aba 2: Preços e Tickets
+        this.updateProgress(35, "Formatando Aba 2: Preços e Faixas de Eficiência...", 2);
+        await sleep(120);
+        const pricing = MarketIntelligenceEngine.calculatePriceEfficiency(allItems, (d) => cards.calculation(d), "10");
+        const sheet2Rows = [
+          [{ v: "CALCULADORA LIVRE — FAIXAS DE PREÇO MAIS EFICIENTES", bold: true }],
+          ["Melhor Faixa de Eficiência", pricing.best ? pricing.best.label : "—", "Score: " + (pricing.best ? pricing.best.efficiencyScore.toFixed(1) : "—") + "/100"],
+          ["Maior Giro Mediano", pricing.highestGiro ? pricing.highestGiro.label : "—", (pricing.highestGiro ? pricing.highestGiro.medianGiro : 0) + " un/dia"],
+          ["Maior Faturamento Mediano", pricing.highestRevenue ? pricing.highestRevenue.label : "—", pricing.highestRevenue ? pricing.highestRevenue.medianRevenue : 0],
+          ["Maior Retorno %", pricing.highestReturn ? pricing.highestReturn.label : "—", (pricing.highestReturn ? (pricing.highestReturn.medianReturnRatio * 100).toFixed(1) : 0) + "%"],
+          [],
+          [{ v: "COMPARATIVO DETALHADO POR FAIXA DE PREÇO", bold: true }],
+          [{ v: "Faixa de Preço", bold: true }, { v: "Anúncios", bold: true }, { v: "Giro Mediano (un/dia)", bold: true }, { v: "Faturamento Mediano (R$)", bold: true }, { v: "Retorno Líquido (%)", bold: true }, { v: "Repasse Médio (R$)", bold: true }, { v: "Score de Eficiência (0-100)", bold: true }],
+          ...pricing.bins.map((b) => [b.label, b.count, b.medianGiro, b.medianRevenue, Number((b.medianReturnRatio * 100).toFixed(1)), b.medianPayout, Number(b.efficiencyScore.toFixed(1))]),
+          [],
+          [{ v: "INSIGHT DE PRECIFICAÇÃO", bold: true }],
+          [pricing.insight.replace(/<[^>]*>/g, "")]
+        ];
+
+        // Aba 3: Concorrência
+        this.updateProgress(55, "Formatando Aba 3: Concorrência e Concentração...", 3);
+        await sleep(120);
+        const competition = MarketIntelligenceEngine.calculateCompetition(allItems);
+        const sheet3Rows = [
+          [{ v: "CALCULADORA LIVRE — CONCENTRAÇÃO DE MERCADO & CONCORRENTES LÍDERES", bold: true }],
+          ["Concentração Top 5 (C5)", Number(competition.c5.toFixed(1)) + "%"],
+          ["Concentração Top 10 (C10)", competition.c10 != null ? Number(competition.c10.toFixed(1)) + "%" : "Amostra menor que 10 anúncios"],
+          ["Índice Herfindahl-Hirschman (HHI)", competition.hhi],
+          ["Classificação do Mercado", competition.hhiClassification],
+          ["Faturamento Total Analisado (R$)", competition.totalRevenue],
+          [],
+          [{ v: "LÍDERES DE MERCADO NA PESQUISA (TOP FATURAMENTO)", bold: true }],
+          [{ v: "Rank", bold: true }, { v: "Título do Anúncio", bold: true }, { v: "Preço de Venda (R$)", bold: true }, { v: "Giro Diário (un/dia)", bold: true }, { v: "Faturamento Mensal (R$)", bold: true }, { v: "Participação (% Share)", bold: true }, { v: "Tipo de Anúncio", bold: true }, { v: "Full", bold: true }, { v: "Patrocinado", bold: true }, { v: "Link do Anúncio", bold: true }],
+          ...competition.top5.map((ad) => [ad.rank, ad.title, ad.price, ad.salesPerDay, ad.monthlyRevenue, Number(ad.share.toFixed(1)), ad.listingTypeId === "gold_pro" ? "Premium" : "Clássico", ad.isFull ? "Sim" : "Não", ad.isSponsored ? "Sim" : "Não", ad.permalink]),
+          [],
+          [{ v: "INSIGHT DE CONCORRÊNCIA", bold: true }],
+          [competition.insight.replace(/<[^>]*>/g, "")]
+        ];
+
+        // Aba 4: Novos Entrantes
+        this.updateProgress(70, "Formatando Aba 4: Novos Entrantes e Giro...", 4);
+        await sleep(120);
+        const entrants = MarketIntelligenceEngine.calculateNewEntrants(allItems, ticketMedians);
+        const sheet4Rows = [
+          [{ v: "CALCULADORA LIVRE — DETECTOR DE NOVOS ENTRANTES (ATÉ 90 DIAS)", bold: true }],
+          ["Total de Anúncios Recentes Encontrados", entrants.count],
+          ["Entrantes com Velocidade Acima da Mediana", entrants.aboveMedianCount],
+          [],
+          [{ v: "RANKING DOS NOVOS ENTRANTES DE MAIOR DESTAQUE", bold: true }],
+          [{ v: "Título do Anúncio", bold: true }, { v: "Preço (R$)", bold: true }, { v: "Dias Ativos (Idade)", bold: true }, { v: "Precisão da Data", bold: true }, { v: "Giro Diário (un/dia)", bold: true }, { v: "Multiplicador vs Mediana", bold: true }, { v: "Faturamento Mensal (R$)", bold: true }, { v: "Avaliação da Tração", bold: true }, { v: "Full", bold: true }, { v: "Link do Anúncio", bold: true }],
+          ...entrants.topEntrants.map((ad) => [ad.title, ad.price, ad.daysActive, ad.isEstimatedDate ? "Data Aproximada" : "Data Confirmada", ad.salesPerDay, Number(ad.multiplier.toFixed(1)) + "x", ad.monthlyRevenue, ad.status, ad.isFull ? "Sim" : "Não", ad.permalink]),
+          [],
+          [{ v: "INSIGHT DE NOVOS ENTRANTES", bold: true }],
+          [entrants.insight.replace(/<[^>]*>/g, "")]
+        ];
+
+        // Aba 5: Simulador
+        this.updateProgress(85, "Formatando Aba 5: Simulador Operacional...", 5);
+        await sleep(120);
+        const form = simForm || {
+          price: analysis.generalScore ? IQVAnalysisEngine.median(allItems.map((it) => it.data?.price).filter(Boolean)) || 99.90 : 99.90,
+          productCost: "",
+          listingTypeId: "gold_special",
+          logisticType: "fulfillment",
+          weightGrams: 1000,
+          taxPercent: String(settings.taxPercent || 6),
+          packagingCost: String(settings.packagingCost || 1.5),
+          adsPercent: "0",
+          dailySales: "4",
+          targetMargin: "15",
+          monthlyGoal: "5000"
+        };
+        const sim = MarketIntelligenceEngine.calculateSimulator(form, MeliPricingEngine2026);
+        const sheet5Rows = [
+          [{ v: "CALCULADORA LIVRE — SIMULADOR OPERACIONAL E CENÁRIOS", bold: true }],
+          [{ v: "PARÂMETROS DA OPERAÇÃO", bold: true }],
+          ["Preço Pretendido de Venda (R$)", sim.price],
+          ["Custo Informado do Produto (R$)", sim.productCost != null ? sim.productCost : "Não informado"],
+          ["Tipo de Anúncio", form.listingTypeId === "gold_pro" ? "Premium" : "Clássico"],
+          ["Modalidade Logística", form.logisticType === "fulfillment" ? "Mercado Envios Full" : "Mercado Envios Normal"],
+          ["Alíquota de Impostos (%)", Number(form.taxPercent || 0)],
+          ["Custo de Embalagem (R$)", Number(form.packagingCost || 0)],
+          ["Publicidade / Ads (%)", Number(form.adsPercent || 0)],
+          ["Vendas Diárias Projetadas (un/dia)", sim.dailySales],
+          ["Meta Mensal de Lucro Limpo (R$)", sim.monthlyGoal],
+          ["Margem Alvo Desejada (%)", sim.targetMargin],
+          [],
+          [{ v: "RESULTADO FINANCEIRO UNITÁRIO", bold: true }],
+          ["Você Recebe do Mercado Livre (Repasse Líquido)", sim.repasse],
+          ["(-) Comissão do ML", sim.commission],
+          ["(-) Frete / Envio Estimado", sim.shippingFee],
+          ["(-) Impostos e Despesas Operacionais", sim.knownExpenses],
+          ["(-) Custo do Produto", sim.productCost != null ? sim.productCost : 0],
+          ["(=) Sobra Operacional Líquida (Lucro Unitário)", sim.unitProfit != null ? sim.unitProfit : "Informe o custo"],
+          ["Margem Líquida Real (%)", sim.marginPercent != null ? Number(sim.marginPercent.toFixed(1)) : "—"],
+          ["Faturamento Mensal Projetado (R$)", sim.monthlyRevenue],
+          ["Lucro Líquido Mensal Projetado (R$)", sim.monthlyProfit != null ? sim.monthlyProfit : "—"],
+          [],
+          [{ v: "DIRETRIZES ESTRATÉGICAS", bold: true }],
+          ["Custo Máximo que Pode Pagar no Produto (R$)", sim.maxAcquisitionCost >= 0 ? sim.maxAcquisitionCost : "Margem inatingível neste preço"],
+          ["Preço Mínimo de Venda Viável (R$)", sim.minViablePrice || "—"],
+          ["Vendas Mensais Necessárias para Atingir a Meta", sim.unitsForGoal || "—"],
+          [],
+          [{ v: "PROJEÇÃO DE CENÁRIOS BASEADOS NA PESQUISA", bold: true }],
+          [{ v: "Cenário", bold: true }, { v: "Giro Diário (un/dia)", bold: true }, { v: "Faturamento Mensal (R$)", bold: true }, { v: "Lucro Líquido Mensal (R$)", bold: true }],
+          ["Conservador (P25)", demand.p25, sim.price * demand.p25 * 30, sim.unitProfit != null ? sim.unitProfit * demand.p25 * 30 : "—"],
+          ["Referência (P50)", demand.p50, sim.price * demand.p50 * 30, sim.unitProfit != null ? sim.unitProfit * demand.p50 * 30 : "—"],
+          ["Expansivo (P75)", demand.p75, sim.price * demand.p75 * 30, sim.unitProfit != null ? sim.unitProfit * demand.p75 * 30 : "—"]
+        ];
+
+        // Aba 6: Listagem Completa de Produtos
+        this.updateProgress(95, `Compilando Aba 6: Listagem Completa de ${allItems.length} Anúncios...`, 6);
+        await sleep(150);
+        const sheet6Rows = [
+          [{ v: "CALCULADORA LIVRE — LISTAGEM COMPLETA DOS ANÚNCIOS CAPTURADOS NA PÁGINA", bold: true }],
+          [
+            { v: "#", bold: true },
+            { v: "Título do Produto", bold: true },
+            { v: "Preço (R$)", bold: true },
+            { v: "Tipo de Anúncio", bold: true },
+            { v: "Comissão (%)", bold: true },
+            { v: "Comissão (R$)", bold: true },
+            { v: "Frete Estimado (R$)", bold: true },
+            { v: "Repasse Líquido (R$)", bold: true },
+            { v: "Margem de Repasse (%)", bold: true },
+            { v: "Vendas Totais", bold: true },
+            { v: "Idade (Dias)", bold: true },
+            { v: "Data Criação", bold: true },
+            { v: "Precisão Data", bold: true },
+            { v: "Giro Diário (un/dia)", bold: true },
+            { v: "Vendas Mês (un/mês)", bold: true },
+            { v: "Faturamento Mês (R$)", bold: true },
+            { v: "Repasse Mensal Estimado (R$)", bold: true },
+            { v: "Estoque", bold: true },
+            { v: "Logística", bold: true },
+            { v: "Full", bold: true },
+            { v: "Patrocinado", bold: true },
+            { v: "Link do Anúncio", bold: true }
+          ]
+        ];
+
+        allItems.forEach((it, idx) => {
+          const calc = cards.calculation(it.data);
+          const repasseMargin = it.data.price > 0 ? (calc.netPayout / it.data.price * 100) : 0;
+          sheet6Rows.push([
+            idx + 1,
+            it.data.title || "Produto sem título",
+            it.data.price || 0,
+            it.data.listingTypeId === "gold_pro" ? "Premium" : "Clássico",
+            cards.commission(it.data),
+            calc.commission,
+            calc.shippingFee,
+            calc.netPayout,
+            Number(repasseMargin.toFixed(1)),
+            it.advanced?.soldQuantity ?? (it.data.soldQuantity ?? 0),
+            it.advanced?.estimatedDaysActive ?? "",
+            it.advanced?.creationDate ? new Date(it.advanced.creationDate).toLocaleDateString("pt-BR") : "",
+            it.advanced ? (it.advanced.creationDateIsEstimated ? "Estimada" : "Confirmada") : "",
+            it.advanced?.salesPerDay != null ? Number(it.advanced.salesPerDay.toFixed(2)) : "",
+            it.advanced?.salesPerMonth != null ? Math.round(it.advanced.salesPerMonth) : "",
+            it.advanced?.monthlyRevenue != null ? Number(it.advanced.monthlyRevenue.toFixed(2)) : "",
+            it.advanced?.salesPerMonth != null ? Number((it.advanced.salesPerMonth * calc.netPayout).toFixed(2)) : "",
+            it.advanced?.availableStock ?? "",
+            it.data.logisticType || "",
+            it.data.isFull ? "Sim" : "Não",
+            it.data.isSponsored ? "Sim" : "Não",
+            it.data.permalink || ""
+          ]);
+        });
+
+        this.updateProgress(98, "Compactando arquivo Excel multi-abas (.xlsx)...");
+        await sleep(100);
+
+        const sheets = [
+          { name: "Visão de Mercado", rows: sheet1Rows },
+          { name: "Preços e Tickets", rows: sheet2Rows },
+          { name: "Concorrência", rows: sheet3Rows },
+          { name: "Novos Entrantes", rows: sheet4Rows },
+          { name: "Simulador", rows: sheet5Rows },
+          { name: "Lista Completa", rows: sheet6Rows }
+        ];
+
+        const xlsxBytes = this.buildWorkbook(sheets);
+
+        this.updateProgress(100, "🎉 Concluído! Iniciando download da planilha...", 7);
+        for (let i = 1; i <= 6; i++) {
+          const chk = document.querySelector(`#cl-chk-${i}`);
+          if (chk) {
+            chk.className = "cl-export-chk is-done";
+            chk.textContent = chk.textContent.replace(/^[⏳⚡]/, "✅");
+          }
+        }
+
+        const blob = new Blob([xlsxBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const dateStr = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = `Calculadora_Livre_Analise_${dateStr}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+        await sleep(1400);
+        modal.remove();
+      } catch (err) {
+        console.error(`${APP}: Erro durante exportação XLSX:`, err);
+        this.updateProgress(100, "Erro ao gerar arquivo. Tente novamente.");
+        await sleep(2500);
+        modal.remove();
+      }
+    }
+  }
+
   class MarketIntelligenceModal {
     static instance = null;
 
@@ -1838,8 +2347,8 @@
           <header class="cl-intel-modal__header">
             <div class="cl-intel-modal__title-group">
               <h2 id="cl-intel-title" class="cl-intel-modal__title">
-                <span>CalcuLivre Intelligence</span>
-                <span class="cl-intel-badge-pro">Fase 1 Pro</span>
+                <span>Calculadora Livre</span>
+                <span class="cl-intel-badge-pro">Intelligence Pro</span>
               </h2>
               <span class="cl-intel-modal__subtitle">Análise avançada de atratividade comercial e viabilidade</span>
             </div>
@@ -1854,6 +2363,11 @@
                   <option value="alto" ${this.selectedSegment === "alto" ? "selected" : ""}>Ticket Alto (a partir de R$ 100,00)</option>
                 </select>
               </label>
+
+              <button type="button" class="cl-intel-export-btn" data-intel-export title="Exportar dados da análise em Excel (.xlsx com 6 abas)">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>Exportar Planilha (6 Abas)</span>
+              </button>
 
               <button type="button" class="cl-intel-modal__close-btn" data-intel-close title="Fechar (Esc)">✕</button>
             </div>
@@ -1887,7 +2401,7 @@
 
           <footer class="cl-intel-modal__footer">
             <span>Fonte dos dados: processamento local de anúncios visíveis na pesquisa do Mercado Livre. Sem chamadas externas.</span>
-            <span>CalcuLivre v1.15.0 • Projeto Gratuito por <a href="https://www.linkedin.com/in/fabio-castro-943649286/?isSelfProfile=true" target="_blank" style="color: #3483fa; text-decoration: none; font-weight: 700;">Fabio Castro</a></span>
+            <span>Calculadora Livre v1.15.0 • Projeto Gratuito por <a href="https://www.linkedin.com/in/fabio-castro-943649286/?isSelfProfile=true" target="_blank" style="color: #3483fa; text-decoration: none; font-weight: 700;">Fabio Castro</a></span>
           </footer>
         </div>
       `;
@@ -2556,6 +3070,16 @@
       // Close button
       this.root.querySelector("[data-intel-close]")?.addEventListener("click", () => this.close());
 
+      // Export XLSX
+      this.root.querySelector("[data-intel-export]")?.addEventListener("click", () => {
+        CalculadoraLivreXlsxExporter.runExport({
+          cards: this.cards,
+          settings: this.settings,
+          iqvAnalysis: this.iqvAnalysis,
+          simForm: this.simForm
+        });
+      });
+
       // Backdrop click closes modal
       this.root.addEventListener("click", (e) => {
         if (e.target === this.root) this.close();
@@ -2628,27 +3152,23 @@
       this.root.id = "calculadora-livre-iqv";
       this.root.className = "cl-root cl-iqv-panel";
 
-      const searchbar = document.querySelector("#calculadora-livre-searchbar");
-      if (searchbar && searchbar.isConnected) {
-        if (this.root.parentElement !== searchbar.parentElement || this.root.nextElementSibling !== searchbar) {
+      if (!this.root.isConnected) {
+        const searchbar = document.querySelector("#calculadora-livre-searchbar");
+        if (searchbar && searchbar.isConnected) {
           searchbar.before(this.root);
-        }
-      } else {
-        const offersSidebar = document.querySelector("[data-testid='filters'], .items-filters-section .sidebar");
-        const filters = document.querySelector(".ui-search-filter-groups") ?? offersSidebar?.querySelector(".qcat-filters");
-        const sidebar = document.querySelector(".ui-search-sidebar") ?? offersSidebar;
-        const offersList = document.querySelector("[data-testid='items-list']");
-        if (!filters && !sidebar && !offersList) return;
+        } else {
+          const offersSidebar = document.querySelector("[data-testid='filters'], .items-filters-section .sidebar");
+          const filters = document.querySelector(".ui-search-filter-groups") ?? offersSidebar?.querySelector(".qcat-filters");
+          const sidebar = document.querySelector(".ui-search-sidebar") ?? offersSidebar;
+          const offersList = document.querySelector("[data-testid='items-list']");
+          if (!filters && !sidebar && !offersList) return;
 
-        if (filters && (this.root.parentElement !== filters.parentElement || this.root.nextElementSibling !== filters)) {
-          filters.before(this.root);
-        } else if (!filters && sidebar && sidebar.firstElementChild !== this.root) {
-          sidebar.prepend(this.root);
-        } else if (!filters && !sidebar && this.root.nextElementSibling !== offersList) {
-          offersList.before(this.root);
+          if (filters) filters.before(this.root);
+          else if (sidebar) sidebar.prepend(this.root);
+          else if (offersList) offersList.before(this.root);
         }
       }
-      if (!existing) this.render();
+      if (!existing || this.root.children.length === 0) this.render();
     }
 
     update() {
@@ -2767,6 +3287,11 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
           <span>Ver detalhes da inteligência (Painel Pro)</span>
         </button>
+
+        <button type="button" class="cl-iqv-export-btn" data-iqv-export title="Exportar dados da análise em Excel (.xlsx)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Exportar Planilha (6 Abas)</span>
+        </button>
       `;
 
       this.bind();
@@ -2780,6 +3305,18 @@
         const items = this.cards.values();
         const analysis = IQVAnalysisEngine.analyze(items, (data) => this.cards.calculation(data));
         MarketIntelligenceModal.open(this.cards, this.settings, analysis);
+      });
+
+      const expBtn = this.root.querySelector("[data-iqv-export]");
+      expBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        CalculadoraLivreXlsxExporter.runExport({
+          cards: this.cards,
+          settings: this.settings,
+          iqvAnalysis: IQVAnalysisEngine.analyze(this.cards.values(), (d) => this.cards.calculation(d)),
+          simForm: null
+        });
       });
     }
   }
@@ -2804,17 +3341,19 @@
       this.root.id = "calculadora-livre-searchbar";
       this.root.className = `cl-root cl-market-filters${offersList && !sidebar ? " cl-market-filters--offers" : ""}`;
 
-      const iqv = document.querySelector("#calculadora-livre-iqv");
-      if (iqv && iqv.isConnected) {
-        if (this.root.previousElementSibling !== iqv) iqv.after(this.root);
-      } else if (filters && (this.root.parentElement !== filters.parentElement || this.root.nextElementSibling !== filters)) {
-        filters.before(this.root);
-      } else if (!filters && sidebar && sidebar.firstElementChild !== this.root) {
-        sidebar.prepend(this.root);
-      } else if (!filters && !sidebar && this.root.nextElementSibling !== offersList) {
-        offersList.before(this.root);
+      if (!this.root.isConnected) {
+        const iqv = document.querySelector("#calculadora-livre-iqv");
+        if (iqv && iqv.isConnected) {
+          iqv.after(this.root);
+        } else if (filters) {
+          filters.before(this.root);
+        } else if (sidebar) {
+          sidebar.prepend(this.root);
+        } else if (offersList) {
+          offersList.before(this.root);
+        }
       }
-      if (!existing) this.render();
+      if (!existing || this.root.children.length === 0) this.render();
     }
     render() {
       if (!this.root) return;
@@ -2826,7 +3365,8 @@
       if (!this.root?.isConnected) return;
       this.cards.prune();
       const items = this.cards.values(); const count = items.length;
-      this.root.querySelector("[data-count]").textContent = `${count} anúncios`;
+      const countEl = this.root.querySelector("[data-count]");
+      if (countEl) countEl.textContent = `${count} anúncios`;
       if (this.sortMode !== "default") this.applyView();
     }
     bind() {
@@ -2876,13 +3416,6 @@
     const isSearch = !hasProductStructure && (isOffers || location.hostname.startsWith("lista.") || Boolean(document.querySelector(CARD_SELECTOR)));
     let pdp, cards, topbar, iqv;
     if (isSearch) {
-      await new Promise((resolve) => {
-        const start = () => setTimeout(resolve, 1200);
-        if (document.readyState === "complete") start();
-        else window.addEventListener("load", start, { once: true });
-      });
-      document.querySelectorAll("#calculadora-livre-searchbar, #calculadora-livre-iqv, #calculadora-livre-intel-modal, .cl-poly").forEach((node) => node.remove());
-      document.querySelectorAll("[data-calculadora-livre-ready]").forEach((node) => node.removeAttribute("data-calculadora-livre-ready"));
       cards = new SearchPolycardInjector(settings, registry, () => {
         topbar?.update();
         iqv?.update();
