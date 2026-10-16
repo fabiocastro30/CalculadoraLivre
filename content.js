@@ -256,6 +256,11 @@
       const price = asNumber(candidate.components?.price?.price?.value ?? candidate.schema?.[0]?.offers?.price ?? eventData.price?.value ?? eventData.price ?? candidate.price?.value ?? candidate.price);
       const estimatedDaysActive = creationDate ? Math.max(1, Math.ceil((Date.now() - creationDate.valueOf()) / 86400000)) : 0;
       const salesPerDay = soldQuantity && estimatedDaysActive ? soldQuantity / estimatedDaysActive : 0;
+      const domainId = eventData.domain_id ?? candidate.domain_id ?? candidate.domainId ?? "";
+      const categoryId = eventData.category_id ?? candidate.category_id ?? candidate.categoryId ?? "";
+      const categoryName = candidate.category_name ?? eventData.category_name ?? "";
+      const brand = eventData.brand ?? candidate.brand ?? candidate.components?.header?.brand?.text ?? "";
+      const dataQuality = explicitCreationDate && soldQuantity ? "complete" : (creationDate ? "estimated" : "basic");
       return {
         identifiers,
         title: eventData.title ?? candidate.title ?? candidate.components?.header?.title?.text ?? candidate.schema?.[0]?.name ?? "",
@@ -267,7 +272,12 @@
         salesPerDay,
         salesPerMonth: salesPerDay * 30,
         monthlyRevenue: salesPerDay * 30 * price,
-        advancedSource: explicitCreationDate ? "structured" : "picture-date"
+        advancedSource: explicitCreationDate ? "structured" : "picture-date",
+        domainId,
+        categoryId,
+        categoryName,
+        brand,
+        dataQuality
       };
     }
 
@@ -297,7 +307,12 @@
             salesPerDay: record.salesPerDay || previous.salesPerDay,
             salesPerMonth: record.salesPerMonth || previous.salesPerMonth,
             monthlyRevenue: record.monthlyRevenue || previous.monthlyRevenue,
-            advancedSource: record.advancedSource || previous.advancedSource
+            advancedSource: record.advancedSource || previous.advancedSource,
+            domainId: record.domainId || previous.domainId || "",
+            categoryId: record.categoryId || previous.categoryId || "",
+            categoryName: record.categoryName || previous.categoryName || "",
+            brand: record.brand || previous.brand || "",
+            dataQuality: record.dataQuality || previous.dataQuality || "basic"
           } : record;
           merged.identifiers.forEach((id) => byIdentifier.set(id, merged));
         }
@@ -364,7 +379,12 @@
             creationDateIsEstimated: !explicitCreationDate,
             estimatedDaysActive, salesPerDay, salesPerMonth: salesPerDay * 30,
             monthlyRevenue: salesPerDay * 30 * price,
-            advancedSource: explicitCreationDate ? "structured" : "picture-date"
+            advancedSource: explicitCreationDate ? "structured" : "picture-date",
+            domainId: "",
+            categoryId: "",
+            categoryName: "",
+            brand: "",
+            dataQuality: explicitCreationDate ? "complete" : "estimated"
           });
         }
       }
@@ -480,17 +500,363 @@
     }
   }
 
+  class CategoryIntelligenceExtractor {
+    static DOMAIN_NAMES = {
+      "MLB-COLLECTIBLE_CARD_GAMES": "Cartas Colecionáveis (TCG)",
+      "MLB-ACTION_FIGURES": "Figuras de Ação",
+      "MLB-PLUSH_TOYS": "Pelúcias",
+      "MLB-BOARD_GAMES": "Jogos de Tabuleiro",
+      "MLB-SMARTWATCHES": "Smartwatches",
+      "MLB-WRISTWATCHES": "Relógios de Pulso",
+      "MLB-HEADPHONES": "Fones de Ouvido",
+      "MLB-CELLPHONES": "Celulares e Smartphones",
+      "MLB-SNEAKERS": "Tênis e Calçados",
+      "MLB-T_SHIRTS": "Camisetas e Roupas",
+      "MLB-SUPPLEMENTS": "Suplementos Alimentares",
+      "MLB-THERMAL_BOTTLES": "Garrafas Térmicas",
+      "MLB-BACKPACKS": "Mochilas e Bolsas",
+      "MLB-VIDEO_GAMES": "Videogames e Consoles",
+      "MLB-DOLLS": "Bonecas e Acessórios",
+      "MLB-SUNGLASSES": "Óculos de Sol",
+      "MLB-TABLETS": "Tablets",
+      "MLB-NOTEBOOKS": "Notebooks e Laptops",
+      "MLB-BEAUTY_AND_PERSONAL_CARE": "Beleza e Cuidado Pessoal",
+      "MLB-AUTO_PARTS": "Peças Automotivas",
+      "MLB-TOOLS": "Ferramentas",
+      "MLB-LAMPS": "Lâmpadas e Iluminação"
+    };
+
+    static normalizeDomainName(domainId, fallback = "") {
+      if (!domainId) return fallback || "Geral";
+      const upper = String(domainId).toUpperCase().trim();
+      if (this.DOMAIN_NAMES[upper]) return this.DOMAIN_NAMES[upper];
+      const cleaned = upper.replace(/^ML[A-Z]-/, "").replace(/_/g, " ").toLowerCase();
+      if (!cleaned) return fallback || "Geral";
+      return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+    }
+
+    static extractAppliedValueResults(urlOrObjOrStr) {
+      if (!urlOrObjOrStr) return null;
+      if (typeof urlOrObjOrStr === "object") {
+        if (Number.isFinite(Number(urlOrObjOrStr.applied_value_results))) return Number(urlOrObjOrStr.applied_value_results);
+        if (Number.isFinite(Number(urlOrObjOrStr.results))) return Number(urlOrObjOrStr.results);
+        if (urlOrObjOrStr.url) return this.extractAppliedValueResults(urlOrObjOrStr.url);
+      }
+      const str = String(urlOrObjOrStr);
+      const matchParam = str.match(/[?&]applied_value_results=(\d+)/i) || str.match(/_applied_value_results_(\d+)/i);
+      if (matchParam) return Number(matchParam[1]);
+      const matchResults = str.match(/[?&]results=(\d+)/i);
+      if (matchResults) return Number(matchResults[1]);
+      const matchParen = str.match(/\((\d[\d.,]*)\)/);
+      if (matchParen) return Number(matchParen[1].replace(/\D/g, ""));
+      return null;
+    }
+
+    static extractSearchContext(nordicRoot, doc = (typeof document !== "undefined" ? document : null)) {
+      const context = {
+        totalResults: 0,
+        categoryId: "",
+        categoryName: "",
+        domainId: "",
+        domainName: "",
+        filters: [],
+        appliedFilters: [],
+        relatedSearches: []
+      };
+
+      try {
+        if (nordicRoot) {
+          const pagination = nordicRoot.pagination ?? nordicRoot.paging ?? nordicRoot.components?.pagination;
+          if (pagination?.total) context.totalResults = asNumber(pagination.total);
+          else if (nordicRoot.results?.length) context.totalResults = nordicRoot.results.length;
+
+          const categoryObj = nordicRoot.category ?? nordicRoot.category_id ?? nordicRoot.components?.category;
+          if (typeof categoryObj === "object" && categoryObj) {
+            context.categoryId = categoryObj.id || "";
+            context.categoryName = categoryObj.name || "";
+          } else if (typeof categoryObj === "string") {
+            context.categoryId = categoryObj;
+          }
+          if (nordicRoot.domain_id) {
+            context.domainId = nordicRoot.domain_id;
+            context.domainName = this.normalizeDomainName(nordicRoot.domain_id);
+          }
+        }
+
+        if (!context.totalResults && doc) {
+          const qtyText = doc.querySelector(".ui-search-search-result__quantity-results")?.textContent ?? "";
+          const qtyMatch = qtyText.match(/([\d.,]+)\s*resultado/i);
+          if (qtyMatch) {
+            context.totalResults = asNumber(qtyMatch[1].replace(/\./g, "").replace(",", "."));
+          }
+        }
+
+        if (!context.categoryName && doc) {
+          const breadcrumbs = [...doc.querySelectorAll(".andes-breadcrumb__item, .ui-search-breadcrumb__item")];
+          if (breadcrumbs.length) {
+            const lastBreadcrumb = breadcrumbs[breadcrumbs.length - 1]?.textContent?.trim();
+            if (lastBreadcrumb) context.categoryName = lastBreadcrumb;
+          }
+        }
+
+        const filtersMap = new Map();
+
+        if (nordicRoot) {
+          const sidebarFilters = nordicRoot.sidebar?.filters ?? nordicRoot.filters ?? nordicRoot.available_filters ?? nordicRoot.components?.sidebar?.filters ?? [];
+          if (Array.isArray(sidebarFilters)) {
+            sidebarFilters.forEach((grp) => {
+              if (!grp || !grp.name) return;
+              const groupName = grp.name;
+              const values = (grp.values ?? grp.applied_values ?? []).map((val) => {
+                const count = this.extractAppliedValueResults(val);
+                return {
+                  name: val.name || String(val),
+                  count: count || 0,
+                  isActive: Boolean(val.applied || val.is_applied || grp.applied_values?.includes(val))
+                };
+              });
+              if (values.length) filtersMap.set(groupName, { name: groupName, values });
+            });
+          }
+        }
+
+        if (doc && (!filtersMap.size || filtersMap.size < 3)) {
+          const domGroups = doc.querySelectorAll(".ui-search-filter-dl, .ui-search-filter-group");
+          domGroups.forEach((groupEl) => {
+            const titleEl = groupEl.querySelector(".ui-search-filter-dt-title, .ui-search-filter-group-title, h3, h4");
+            const groupName = titleEl?.textContent?.trim() || "";
+            if (!groupName || groupName.length > 40) return;
+
+            const items = [...groupEl.querySelectorAll(".ui-search-filter-container, li.ui-search-filter-item")];
+            const values = items.map((itemEl) => {
+              const nameEl = itemEl.querySelector(".ui-search-filter-name");
+              const valName = nameEl?.textContent?.trim() || itemEl.textContent?.trim()?.split("(")[0]?.trim() || "";
+              const link = itemEl.querySelector("a");
+              const count = this.extractAppliedValueResults(link?.href) || this.extractAppliedValueResults(itemEl.textContent);
+              const isActive = Boolean(itemEl.querySelector(".ui-search-filter-applied, .andes-checkbox--checked"));
+              return { name: valName, count: count || 0, isActive };
+            }).filter((v) => v.name && v.name.length < 50);
+
+            if (values.length && !filtersMap.has(groupName)) {
+              filtersMap.set(groupName, { name: groupName, values });
+            }
+          });
+        }
+        context.filters = Array.from(filtersMap.values());
+
+        const relatedSet = new Set();
+        const relatedList = [];
+
+        if (nordicRoot) {
+          const rawRelated = nordicRoot.related_searches ?? nordicRoot.components?.related_searches ?? nordicRoot.top_keywords ?? [];
+          if (Array.isArray(rawRelated)) {
+            rawRelated.forEach((item) => {
+              const text = typeof item === "string" ? item : (item.name || item.text || item.keyword || "");
+              if (text && !relatedSet.has(text.toLowerCase())) {
+                relatedSet.add(text.toLowerCase());
+                relatedList.push(text);
+              }
+            });
+          }
+        }
+
+        if (doc) {
+          const domRelated = doc.querySelectorAll(".ui-search-related-keywords a, .ui-search-related-keywords__item a");
+          domRelated.forEach((el) => {
+            const text = el.textContent?.trim() || "";
+            if (text && !relatedSet.has(text.toLowerCase())) {
+              relatedSet.add(text.toLowerCase());
+              relatedList.push(text);
+            }
+          });
+        }
+
+        const mainQuery = (doc?.querySelector?.("input.nav-search-input")?.value || context.categoryName || "").toLowerCase().trim();
+        const queryTokens = mainQuery.split(/\s+/).filter(Boolean);
+
+        context.relatedSearches = relatedList.slice(0, 12).map((term) => {
+          const lower = term.toLowerCase();
+          let score = 50;
+          if (lower === mainQuery) score = 100;
+          else {
+            const matches = queryTokens.filter((tk) => lower.includes(tk)).length;
+            score = Math.min(95, 50 + matches * 20);
+          }
+          let relevanceLabel = "Moderada";
+          let badgeColor = "#64748b";
+          if (score >= 80) { relevanceLabel = "Alta Relevância"; badgeColor = "#00a650"; }
+          else if (score >= 65) { relevanceLabel = "Boa Aderência"; badgeColor = "#3483fa"; }
+          return { term, score, relevanceLabel, badgeColor };
+        });
+      } catch (err) {
+        console.debug(`${APP}: Erro na extração do SearchContext:`, err);
+      }
+
+      return context;
+    }
+
+    static groupAdsByDomainOrCategory(items, calculationFn) {
+      const byIdentity = new Map();
+      let totalPositions = items.length;
+      let duplicatedPositions = 0;
+
+      items.forEach((it) => {
+        const id = it.data.identifiers?.[0] || it.data.itemId || it.data.permalink;
+        if (!id) return;
+        if (byIdentity.has(id)) {
+          duplicatedPositions++;
+          const existing = byIdentity.get(id);
+          if (!existing.advanced && it.advanced) {
+            byIdentity.set(id, it);
+          }
+        } else {
+          byIdentity.set(id, it);
+        }
+      });
+
+      const uniqueItems = Array.from(byIdentity.values());
+      const groupsMap = new Map();
+
+      uniqueItems.forEach((it) => {
+        const domainId = it.advanced?.domainId || it.data?.domainId || "";
+        const categoryId = it.advanced?.categoryId || it.data?.categoryId || "";
+        const categoryName = it.advanced?.categoryName || it.data?.categoryName || "";
+
+        let key = "";
+        let displayName = "";
+
+        if (domainId) {
+          key = domainId;
+          displayName = this.normalizeDomainName(domainId);
+        } else if (categoryName) {
+          key = categoryName;
+          displayName = categoryName;
+        } else if (categoryId) {
+          key = categoryId;
+          displayName = this.normalizeDomainName(categoryId);
+        } else {
+          key = "GERAL";
+          displayName = "Geral / Principal";
+        }
+
+        if (!groupsMap.has(key)) {
+          groupsMap.set(key, {
+            key,
+            domainId,
+            categoryId,
+            name: displayName,
+            items: []
+          });
+        }
+        groupsMap.get(key).items.push(it);
+      });
+
+      let aggregatedRevenue = 0;
+      let aggregatedGiro = 0;
+
+      const groups = Array.from(groupsMap.values()).map((grp) => {
+        const gItems = grp.items;
+        const prices = gItems.map((it) => asNumber(it.data.price)).filter((p) => p > 0);
+        const validSales = gItems.filter((it) => it.advanced?.salesPerDay != null && Number.isFinite(it.advanced.salesPerDay) && it.advanced.salesPerDay >= 0);
+        const dailyGiros = validSales.map((it) => it.advanced.salesPerDay);
+        const monthlyRevenues = validSales.map((it) => it.advanced.monthlyRevenue ?? (it.advanced.salesPerDay * 30 * it.data.price));
+
+        const returnRatios = gItems.map((it) => {
+          const calc = calculationFn ? calculationFn(it.data) : { netPayout: it.data.price * 0.8 };
+          return it.data.price > 0 ? (calc.netPayout / it.data.price) : 0;
+        });
+
+        const medianPrice = IQVAnalysisEngine.median(prices) || 0;
+        const medianDailyGiro = IQVAnalysisEngine.median(dailyGiros) || 0;
+        const totalDailyGiro = dailyGiros.reduce((a, b) => a + b, 0);
+        const projectedMonthlyRevenue = monthlyRevenues.reduce((a, b) => a + b, 0);
+        const medianMonthlyRevenue = IQVAnalysisEngine.median(monthlyRevenues) || 0;
+        const medianReturnRatio = IQVAnalysisEngine.median(returnRatios) || 0;
+
+        aggregatedRevenue += projectedMonthlyRevenue;
+        aggregatedGiro += totalDailyGiro;
+
+        const iqv = IQVAnalysisEngine.analyze(gItems, calculationFn);
+
+        const sponsoredCount = gItems.filter((it) => it.data.isSponsored).length;
+        const fullCount = gItems.filter((it) => it.data.isFull || it.data.logisticType === "fulfillment").length;
+
+        const totalAppearances = items.filter((it) => {
+          const itDomain = it.advanced?.domainId || it.data?.domainId || "";
+          if (grp.domainId && itDomain === grp.domainId) return true;
+          return grp.name === CategoryIntelligenceExtractor.normalizeDomainName(itDomain, it.data?.categoryName || "Geral / Principal");
+        }).length;
+
+        return {
+          key: grp.key,
+          domainId: grp.domainId,
+          categoryId: grp.categoryId,
+          name: grp.name,
+          uniqueCount: gItems.length,
+          totalPositions: Math.max(gItems.length, totalAppearances),
+          sponsoredCount,
+          fullCount,
+          medianPrice,
+          medianDailyGiro,
+          totalDailyGiro,
+          projectedMonthlyRevenue,
+          medianMonthlyRevenue,
+          medianReturnRatio,
+          iqv,
+          items: gItems
+        };
+      });
+
+      groups.forEach((g) => {
+        g.revenueShare = aggregatedRevenue > 0 ? (g.projectedMonthlyRevenue / aggregatedRevenue * 100) : 0;
+        g.giroShare = aggregatedGiro > 0 ? (g.totalDailyGiro / aggregatedGiro * 100) : 0;
+        g.adShare = uniqueItems.length > 0 ? (g.uniqueCount / uniqueItems.length * 100) : 0;
+      });
+
+      groups.sort((a, b) => b.projectedMonthlyRevenue - a.projectedMonthlyRevenue);
+
+      const topGroup = groups[0] || null;
+
+      const insight = groups.length > 0
+        ? `Foram identificadas <strong>${groups.length} subcategorias/domínios comerciais</strong> nesta pesquisa. O segmento líder é <strong>${topGroup ? escapeHtml(topGroup.name) : "Geral"}</strong>, concentrando <strong>${topGroup ? topGroup.revenueShare.toFixed(1) : 0}%</strong> do faturamento mensal estimado (<strong>${money.format(topGroup ? topGroup.projectedMonthlyRevenue : 0)}</strong>). Foram desduplicadas <strong>${duplicatedPositions} aparições patrocinadas</strong> sobrepostas no ranking.`
+        : "Dados insuficientes para estruturar agrupamento por categoria.";
+
+      return {
+        totalPositions,
+        uniqueAdsCount: uniqueItems.length,
+        duplicatedPositions,
+        aggregatedRevenue,
+        aggregatedGiro,
+        groups,
+        topGroup,
+        insight
+      };
+    }
+  }
+
   class StructuredDataRegistry {
     constructor() {
       this.byIdentifier = new Map();
       this.byTitle = new Map();
       this.records = new Set();
       this.pdpData = null;
+      this.searchContext = null;
       this.listeners = new Set();
       this.seenPayloads = new Set();
       this.notify = debounce(() => this.listeners.forEach((listener) => listener()), 120);
       bridgeInbox.forEach((payload) => this.schedule(payload));
       bridgeSubscribers.add((payload) => this.schedule(payload));
+    }
+
+    getSearchContext() {
+      if (this.searchContext && (this.searchContext.totalResults > 0 || this.searchContext.filters?.length > 0)) {
+        return this.searchContext;
+      }
+      const fallback = CategoryIntelligenceExtractor.extractSearchContext(null, document);
+      if (!this.searchContext || (fallback.filters?.length || 0) > (this.searchContext.filters?.length || 0)) {
+        this.searchContext = fallback;
+      }
+      return this.searchContext;
     }
 
     titleKey(value) {
@@ -506,7 +872,15 @@
 
     ingestText(text) {
       try {
-        const { pdp, searchRecords } = NordicJsonExtractor.fromText(text);
+        const { root, pdp, searchRecords } = NordicJsonExtractor.fromText(text);
+        if (root) {
+          const ctx = CategoryIntelligenceExtractor.extractSearchContext(root, document);
+          if (ctx && (ctx.totalResults > 0 || ctx.filters?.length > 0)) {
+            if (!this.searchContext || (ctx.filters?.length || 0) >= (this.searchContext.filters?.length || 0)) {
+              this.searchContext = ctx;
+            }
+          }
+        }
         searchRecords.forEach((record) => this.upsert(record));
         if (pdp && (pdp.itemId || pdp.price || pdp.soldQuantity)) this.upsertPdp(pdp);
         if (searchRecords.length || pdp?.itemId) this.notify();
@@ -527,7 +901,12 @@
         soldQuantity: record.soldQuantity || previous.soldQuantity,
         creationDate: record.creationDate ?? previous.creationDate,
         creationDateIsEstimated: record.creationDate ? record.creationDateIsEstimated : previous.creationDateIsEstimated,
-        advancedSource: record.advancedSource || previous.advancedSource
+        advancedSource: record.advancedSource || previous.advancedSource,
+        domainId: record.domainId || previous.domainId || "",
+        categoryId: record.categoryId || previous.categoryId || "",
+        categoryName: record.categoryName || previous.categoryName || "",
+        brand: record.brand || previous.brand || "",
+        dataQuality: record.dataQuality || previous.dataQuality || "basic"
       } : record;
       merged.identifiers.forEach((id) => this.byIdentifier.set(id, merged));
       this.records.add(merged);
@@ -545,9 +924,26 @@
         price: data.price,
         sold_quantity: data.soldQuantity,
         date_created: data.creationDateIsEstimated ? null : data.creationDate,
-        picture_id: data.creationDateIsEstimated && data.creationDate ? `_01${new Date(data.creationDate).getFullYear()}` : ""
+        picture_id: data.creationDateIsEstimated && data.creationDate ? `_01${new Date(data.creationDate).getFullYear()}` : "",
+        domain_id: data.domainId ?? "",
+        category_id: data.categoryId ?? "",
+        category_name: data.categoryName ?? "",
+        brand: data.brand ?? ""
       });
-      if (record) this.upsert({ ...record, creationDate: data.creationDate, creationDateIsEstimated: data.creationDateIsEstimated, estimatedDaysActive: data.estimatedDaysActive, salesPerDay: data.salesPerDay, salesPerMonth: data.salesPerMonth, monthlyRevenue: data.monthlyRevenue });
+      if (record) this.upsert({
+        ...record,
+        creationDate: data.creationDate,
+        creationDateIsEstimated: data.creationDateIsEstimated,
+        estimatedDaysActive: data.estimatedDaysActive,
+        salesPerDay: data.salesPerDay,
+        salesPerMonth: data.salesPerMonth,
+        monthlyRevenue: data.monthlyRevenue,
+        domainId: data.domainId ?? "",
+        categoryId: data.categoryId ?? "",
+        categoryName: data.categoryName ?? "",
+        brand: data.brand ?? "",
+        dataQuality: data.creationDateIsEstimated ? "estimated" : "complete"
+      });
     }
 
     addFetchedPdp(data) {
@@ -569,7 +965,12 @@
         estimatedDaysActive: days,
         salesPerDay,
         salesPerMonth: salesPerDay * 30,
-        monthlyRevenue: salesPerDay * 30 * price
+        monthlyRevenue: salesPerDay * 30 * price,
+        domainId: record.domainId || "",
+        categoryId: record.categoryId || "",
+        categoryName: record.categoryName || "",
+        brand: record.brand || "",
+        dataQuality: record.dataQuality || "basic"
       };
     }
 
@@ -1472,8 +1873,9 @@
 
       for (let s = start; s < end; s += step) {
         const binMin = s;
-        const binMax = s + step - 0.01;
-        const inBin = valid.filter((it) => it.data.price >= binMin && it.data.price <= binMax);
+        const isLast = (s + step >= end);
+        const binMax = s + step;
+        const inBin = valid.filter((it) => isLast ? (it.data.price >= binMin && it.data.price <= binMax) : (it.data.price >= binMin && it.data.price < binMax));
         if (!inBin.length) continue;
 
         const withSales = inBin.filter((it) => it.advanced?.salesPerDay != null && Number.isFinite(it.advanced.salesPerDay) && it.advanced.salesPerDay >= 0);
@@ -1499,7 +1901,7 @@
         const efficiencyScore = IQVAnalysisEngine.scoreTier(sg, sf, sr);
 
         bins.push({
-          label: `R$ ${binMin.toFixed(0)} a R$ ${(s + step - 0.01).toFixed(2).replace('.', ',')}`,
+          label: `R$ ${binMin.toFixed(0)} a R$ ${binMax.toFixed(2).replace('.', ',')}`,
           min: binMin,
           max: binMax,
           count: inBin.length,
@@ -1722,7 +2124,9 @@
 
       let minViablePrice = null;
       if (productCost != null && productCost > 0) {
-        for (let p = Math.max(5, Math.floor(productCost)); p <= 10000; p += 0.50) {
+        let low = Math.max(1, productCost);
+        let high = 50000;
+        const evalMargin = (p) => {
           const testCalc = pricingEngine.calculate({
             price: p,
             commissionPercent,
@@ -1735,11 +2139,16 @@
             considerSubsidy: false
           });
           const testProfit = testCalc.netPayout - (p * taxPercent / 100 + p * adsPercent / 100 + packagingCost + productCost);
-          const testMargin = (testProfit / p) * 100;
-          if (testMargin >= targetMargin) {
-            minViablePrice = p;
-            break;
+          return (testProfit / p) * 100;
+        };
+
+        if (evalMargin(high) >= targetMargin) {
+          for (let i = 0; i < 28; i++) {
+            const mid = (low + high) / 2;
+            if (evalMargin(mid) >= targetMargin) high = mid;
+            else low = mid;
           }
+          minViablePrice = Math.ceil(high * 2) / 2;
         }
       }
 
@@ -1764,6 +2173,15 @@
         dailySales,
         targetMargin,
         monthlyGoal
+      };
+    }
+
+    // 6. Inteligência de Categorias
+    static calculateCategories(items, calculationFn, searchContext) {
+      const grouping = CategoryIntelligenceExtractor.groupAdsByDomainOrCategory(items, calculationFn);
+      return {
+        ...grouping,
+        searchContext: searchContext || { totalResults: 0, filters: [], relatedSearches: [] }
       };
     }
   }
@@ -2034,19 +2452,20 @@
       }
     }
 
-    static async runExport({ cards, settings }) {
+    static async runExport({ cards, settings, iqvAnalysis, simForm }) {
       const modal = this.showProgressModal();
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
       try {
         await sleep(100);
-        this.updateProgress(25, "Coletando anúncios capturados na busca...", 1);
+        this.updateProgress(20, "Coletando anúncios capturados na busca...", 1);
         await sleep(150);
 
         const allItems = cards.values();
         const searchTerm = document.querySelector("input.nav-search-input")?.value || document.title.split("|")[0].trim() || "Busca no Mercado Livre";
+        const searchCtx = cards.registry?.getSearchContext?.() || CategoryIntelligenceExtractor.extractSearchContext(null, document);
 
-        this.updateProgress(55, `Calculando comissões, envio e repasses de ${allItems.length} anúncios...`, 2);
+        this.updateProgress(45, `Calculando inteligência, comissões e repasses de ${allItems.length} anúncios...`, 2);
         await sleep(150);
 
         let totalRevenueSum = 0;
@@ -2068,12 +2487,13 @@
           return { it, calc, repasseMargin, monthlyRev, monthlyNet };
         });
 
-        this.updateProgress(80, "Formatando colunas e valores em R$...", 3);
+        this.updateProgress(70, "Estruturando abas: Anúncios, Categorias, Filtros e Metodologia...", 3);
         await sleep(150);
 
         const avgPayout = allItems.length > 0 ? (totalNetPayoutSum / allItems.length) : 0;
 
-        const sheetRows = [
+        // ABA 1: Lista de Anúncios
+        const sheetRows1 = [
           [{ v: "CALCULADORA LIVRE — LISTAGEM DE ANÚNCIOS DA PESQUISA", bold: true }],
           ["Data da Exportação", new Date().toLocaleString("pt-BR")],
           ["Termo Pesquisado", searchTerm],
@@ -2084,6 +2504,7 @@
           [
             { v: "#", bold: true },
             { v: "Título do Produto", bold: true },
+            { v: "Categoria / Domínio", bold: true },
             { v: "Preço de Venda (R$)", bold: true },
             { v: "Repasse Líquido ML (R$)", bold: true },
             { v: "Margem de Repasse (%)", bold: true },
@@ -2098,6 +2519,7 @@
             { v: "Idade do Anúncio", bold: true },
             { v: "Data de Criação", bold: true },
             { v: "Precisão da Data", bold: true },
+            { v: "Qualidade dos Dados", bold: true },
             { v: "Giro Diário (Velocidade)", bold: true },
             { v: "Vendas Estimadas / Mês", bold: true },
             { v: "Faturamento Mensal Estimado (R$)", bold: true },
@@ -2110,10 +2532,13 @@
         calculatedItems.forEach(({ it, calc, repasseMargin, monthlyRev, monthlyNet }, idx) => {
           const creation = it.advanced?.creationDate ? new Date(it.advanced.creationDate) : null;
           const validCreation = creation && !Number.isNaN(creation.valueOf());
+          const catLabel = it.advanced?.domainId ? CategoryIntelligenceExtractor.normalizeDomainName(it.advanced.domainId) : (it.advanced?.categoryName || it.data?.categoryName || "Geral");
+          const qualityLabel = it.advanced?.dataQuality === "complete" ? "Completa (Data confirmada)" : (it.advanced?.dataQuality === "estimated" ? "Estimada (Via foto/revisão)" : "Básica (Sem idade)");
 
-          sheetRows.push([
+          sheetRows1.push([
             idx + 1,
             it.data.title || "Produto sem título",
+            catLabel,
             this.formatMoney(it.data.price),
             this.formatMoney(calc.netPayout),
             this.formatPercent(repasseMargin),
@@ -2128,6 +2553,7 @@
             it.advanced?.estimatedDaysActive != null ? this.formatNumber(it.advanced.estimatedDaysActive, "dias") : "—",
             validCreation ? shortDate.format(creation) : "—",
             it.advanced ? (it.advanced.creationDateIsEstimated ? "Data Estimada" : "Data Confirmada") : "—",
+            qualityLabel,
             it.advanced?.salesPerDay != null ? `${Number(it.advanced.salesPerDay.toFixed(2)).toLocaleString("pt-BR")} un./dia` : "—",
             it.advanced?.salesPerMonth != null ? this.formatNumber(Math.round(it.advanced.salesPerMonth), "un./mês") : "—",
             this.formatMoney(monthlyRev),
@@ -2137,11 +2563,132 @@
           ]);
         });
 
+        // ABA 2: Resumo de Categorias
+        const catGrouping = CategoryIntelligenceExtractor.groupAdsByDomainOrCategory(allItems, (d) => cards.calculation(d));
+        const sheetRows2 = [
+          [{ v: "CALCULADORA LIVRE — RESUMO DE CATEGORIAS E SUBDOMÍNIOS", bold: true }],
+          ["Data da Exportação", new Date().toLocaleString("pt-BR")],
+          ["Termo Pesquisado", searchTerm],
+          ["Subcategorias Identificadas", catGrouping.groups.length],
+          ["Total de Anúncios Únicos", catGrouping.uniqueAdsCount],
+          ["Aparições Patrocinadas Desduplicadas", catGrouping.duplicatedPositions],
+          ["Faturamento Mensal Projetado da Pesquisa", this.formatMoney(catGrouping.aggregatedRevenue)],
+          [],
+          [
+            { v: "#", bold: true },
+            { v: "Subcategoria / Domínio", bold: true },
+            { v: "Anúncios Únicos", bold: true },
+            { v: "Posições Totais", bold: true },
+            { v: "Preço Mediano (R$)", bold: true },
+            { v: "Giro Diário Mediano", bold: true },
+            { v: "Giro Diário Total", bold: true },
+            { v: "Faturamento Projetado (R$)", bold: true },
+            { v: "Share Faturamento (%)", bold: true },
+            { v: "Share Giro (%)", bold: true },
+            { v: "Repasse Líquido Médio (%)", bold: true },
+            { v: "IQV Subcategoria", bold: true },
+            { v: "Classificação IQV", bold: true }
+          ]
+        ];
+
+        catGrouping.groups.forEach((grp, idx) => {
+          const iqvVal = grp.iqv?.generalScore != null ? grp.iqv.generalScore.toFixed(1) : "—";
+          const iqvClass = grp.iqv?.generalClassification?.label || "—";
+
+          sheetRows2.push([
+            idx + 1,
+            grp.name,
+            grp.uniqueCount,
+            grp.totalPositions,
+            this.formatMoney(grp.medianPrice),
+            `${number.format(grp.medianDailyGiro)} un./dia`,
+            `${number.format(grp.totalDailyGiro)} un./dia`,
+            this.formatMoney(grp.projectedMonthlyRevenue),
+            this.formatPercent(grp.revenueShare),
+            this.formatPercent(grp.giroShare),
+            this.formatPercent(grp.medianReturnRatio * 100),
+            iqvVal,
+            iqvClass
+          ]);
+        });
+
+        // ABA 3: Distribuição de Filtros Oficiais ML
+        const filtersList = searchCtx.filters || [];
+        const sheetRows3 = [
+          [{ v: "CALCULADORA LIVRE — DISTRIBUIÇÃO DE FILTROS OFICIAIS DO MERCADO LIVRE", bold: true }],
+          ["Data da Exportação", new Date().toLocaleString("pt-BR")],
+          ["Termo Pesquisado", searchTerm],
+          ["Total de Resultados Declarados pelo ML", searchCtx.totalResults ? this.formatNumber(searchCtx.totalResults, "produtos") : "Não informado"],
+          [],
+          [
+            { v: "#", bold: true },
+            { v: "Grupo de Filtro", bold: true },
+            { v: "Opção do Filtro", bold: true },
+            { v: "Quantidade de Anúncios no ML", bold: true },
+            { v: "Status do Filtro", bold: true }
+          ]
+        ];
+
+        let filterRowIdx = 1;
+        filtersList.forEach((grp) => {
+          grp.values.forEach((val) => {
+            sheetRows3.push([
+              filterRowIdx++,
+              grp.name,
+              val.name,
+              val.count > 0 ? this.formatNumber(val.count, "produtos") : "Disponível",
+              val.isActive ? "Filtro Ativo" : "Disponível para Filtragem"
+            ]);
+          });
+        });
+
+        if (sheetRows3.length <= 6) {
+          sheetRows3.push([1, "Geral", "Filtros oficiais sincronizados diretamente da busca", "—", "Normal"]);
+        }
+
+        // ABA 4: Metodologia e Critérios
+        const sheetRows4 = [
+          [{ v: "CALCULADORA LIVRE — METODOLOGIA, FÓRMULAS E CRITÉRIOS DE ANÁLISE", bold: true }],
+          ["Versão do Sistema", "Calculadora Livre v1.15.0"],
+          ["Data de Emissão", new Date().toLocaleString("pt-BR")],
+          [],
+          [{ v: "1. ÍNDICE DE QUALIDADE E VIABILIDADE (IQV)", bold: true }],
+          ["Definição", "Nota consolidada de 0 a 100 que avalia a atratividade comercial de um nicho ou subcategoria no Mercado Livre."],
+          ["Pilares de Avaliação", "1. Velocidade de Giro (35%): avalia a velocidade diária de saída de produtos (unidades por dia)."],
+          ["", "2. Volume de Faturamento (35%): avalia a capacidade financeira mensal gerada pelo produto ou categoria."],
+          ["", "3. Razão de Repasse Líquido (30%): avalia a margem de retenção que sobra para o vendedor após comissões e taxas."],
+          ["Faixas de Classificação", "0 a 39,9: Muito Baixa (Vermelho) | 40 a 54,9: Baixa (Laranja) | 55 a 69,9: Média (Amarelo) | 70 a 84,9: Alta (Verde Claro) | 85 a 100: Muito Alta (Verde Escuro)"],
+          [],
+          [{ v: "2. SEGMENTAÇÃO DE TICKETS", bold: true }],
+          ["Ticket Baixo", "Anúncios com preço de venda de até R$ 50,00."],
+          ["Ticket Médio", "Anúncios com preço de venda entre R$ 50,01 e R$ 99,99."],
+          ["Ticket Alto", "Anúncios com preço de venda a partir de R$ 100,00."],
+          [],
+          [{ v: "3. CRITÉRIOS DE DATA E ESTIMATIVA DE VELOCIDADE", bold: true }],
+          ["Data Confirmada", "Obtida através de registros explícitos do anúncio (data_created ou start_time na estrutura da página)."],
+          ["Data Estimada por Foto", "Quando a data explícita não está presente, a data é estimada pelo timestamp codificado na imagem principal do Mercado Livre."],
+          ["Giro Diário (un./dia)", "Quantidade total vendida dividida pelos dias ativos calculados desde a data de criação."],
+          ["Faturamento Mensal Estimado", "Giro diário multiplicado por 30 dias e pelo preço atual de venda."],
+          [],
+          [{ v: "4. DEDUPLICAÇÃO DE ANÚNCIOS", bold: true }],
+          ["Patrocinados vs Orgânicos", "No Mercado Livre, anúncios patrocinados (Product Ads) costumam aparecer duplicados em posições superiores."],
+          ["Critério", "Nas métricas consolidadas (IQV, giro agregado e faturamento por categoria), cada anúncio é contabilizado apenas uma vez."],
+          [],
+          [{ v: "5. TARIFAS E CUSTOS OPERACIONAIS (MERCADO LIVRE 2026)", bold: true }],
+          ["Tipo Clássico", "Comissão padrão do Mercado Livre (configurável pelo usuário, padrão 12%)."],
+          ["Tipo Premium", "Comissão ampliada com parcelamento sem juros (configurável pelo usuário, padrão 17%)."],
+          ["Tarifa Fixa", "Incide sobre produtos com preço inferior a R$ 79,00 (tabelado de R$ 6,00 a R$ 6,50 conforme a faixa)."],
+          ["Frete Grátis Mercado Envios", "Obrigatório para produtos a partir de R$ 79,00, custeado parcialmente pelo vendedor conforme peso e reputação."]
+        ];
+
         this.updateProgress(95, "Gerando arquivo Excel (.xlsx)...", 4);
         await sleep(100);
 
         const sheets = [
-          { name: "Lista de Anúncios", rows: sheetRows }
+          { name: "Lista de Anúncios", rows: sheetRows1 },
+          { name: "Resumo de Categorias", rows: sheetRows2 },
+          { name: "Distribuição de Filtros", rows: sheetRows3 },
+          { name: "Metodologia", rows: sheetRows4 }
         ];
 
         const xlsxBytes = this.buildWorkbook(sheets);
@@ -2187,6 +2734,9 @@
       this.selectedSegment = "all";
       this.priceGrouping = "10";
       this.priceMetric = "efficiency";
+      this.categorySort = "revenue";
+      this.categoryMetric = "revenue";
+      this.selectedSubcategory = null;
       this.simForm = {
         price: "",
         productCost: "",
@@ -2339,6 +2889,7 @@
             <button type="button" class="cl-intel-tab ${this.activeTab === 'competition' ? 'is-active' : ''}" data-intel-tab="competition">🏆 Concorrência</button>
             <button type="button" class="cl-intel-tab ${this.activeTab === 'entrants' ? 'is-active' : ''}" data-intel-tab="entrants">🚀 Novos Entrantes</button>
             <button type="button" class="cl-intel-tab ${this.activeTab === 'simulator' ? 'is-active' : ''}" data-intel-tab="simulator">🧮 Simulador</button>
+            <button type="button" class="cl-intel-tab ${this.activeTab === 'categories' ? 'is-active' : ''}" data-intel-tab="categories">🗂️ Categorias</button>
           </nav>
 
           <div class="cl-intel-body">
@@ -2361,6 +2912,7 @@
       if (this.activeTab === "competition") return this.renderCompetitionTab(items);
       if (this.activeTab === "entrants") return this.renderEntrantsTab(items, allItems);
       if (this.activeTab === "simulator") return this.renderSimulatorTab(items);
+      if (this.activeTab === "categories") return this.renderCategoriesTab(items, allItems);
       return "";
     }
 
@@ -3078,6 +3630,291 @@
       `;
     }
 
+    // 6. Inteligência de Categorias
+    renderCategoriesTab(items, allItems) {
+      const calcFn = (d) => this.cards.calculation(d);
+      const searchCtx = this.cards?.registry?.getSearchContext?.();
+      const catData = MarketIntelligenceEngine.calculateCategories(items, calcFn, searchCtx);
+
+      // Apply sorting on groups
+      const sortedGroups = [...catData.groups];
+      if (this.categorySort === "revenue") sortedGroups.sort((a, b) => b.projectedMonthlyRevenue - a.projectedMonthlyRevenue);
+      else if (this.categorySort === "giro") sortedGroups.sort((a, b) => b.medianDailyGiro - a.medianDailyGiro);
+      else if (this.categorySort === "ads") sortedGroups.sort((a, b) => b.uniqueCount - a.uniqueCount);
+      else if (this.categorySort === "iqv") sortedGroups.sort((a, b) => (b.iqv?.generalScore || 0) - (a.iqv?.generalScore || 0));
+      else if (this.categorySort === "margin") sortedGroups.sort((a, b) => b.medianReturnRatio - a.medianReturnRatio);
+
+      // Section A: Resumo Geral
+      const topName = catData.topGroup ? catData.topGroup.name : "N/D";
+      const topShare = catData.topGroup ? catData.topGroup.revenueShare.toFixed(1) : "0";
+
+      // Section C: Bar chart data
+      const metricKey = this.categoryMetric;
+      const maxVal = Math.max(
+        ...sortedGroups.map((g) => metricKey === "revenue" ? g.projectedMonthlyRevenue : metricKey === "giro" ? g.totalDailyGiro : g.uniqueCount),
+        1
+      );
+
+      const barsHtml = sortedGroups.map((g) => {
+        const val = metricKey === "revenue" ? g.projectedMonthlyRevenue : metricKey === "giro" ? g.totalDailyGiro : g.uniqueCount;
+        const pct = Math.round((val / maxVal) * 100);
+        const valFormatted = metricKey === "revenue" ? money.format(val) : metricKey === "giro" ? `${number.format(val)} un./dia` : `${g.uniqueCount} anúncios`;
+        const sharePct = metricKey === "revenue" ? g.revenueShare : metricKey === "giro" ? g.giroShare : g.adShare;
+        return `
+          <div class="cl-intel-bar-row">
+            <div class="cl-intel-bar-meta">
+              <strong>${escapeHtml(g.name)}</strong>
+              <span><strong>${valFormatted}</strong> (${sharePct.toFixed(1)}%)</span>
+            </div>
+            <div class="cl-intel-bar-track">
+              <div class="cl-intel-bar-fill" style="width: ${pct}%; background-color: #3483fa;"></div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      // Section B: Table rows
+      const tableRowsHtml = sortedGroups.map((g, idx) => {
+        const iqvScore = g.iqv?.generalScore != null ? number.format(g.iqv.generalScore) : "—";
+        const iqvClass = g.iqv?.generalClassification?.label || "—";
+        const iqvColor = g.iqv?.generalClassification?.color || "#737373";
+        const isSelected = this.selectedSubcategory === g.key;
+        return `
+          <tr class="${isSelected ? 'is-selected' : ''}" style="${isSelected ? 'background-color: #f0fdf4;' : ''}">
+            <td><strong>#${idx + 1}</strong></td>
+            <td>
+              <strong style="color: #333; font-size: 13px;">${escapeHtml(g.name)}</strong>
+              ${g.domainId ? `<div style="font-size: 10.5px; color: #888;">${escapeHtml(g.domainId)}</div>` : ''}
+            </td>
+            <td>
+              <strong>${g.uniqueCount}</strong> un.
+              ${g.totalPositions > g.uniqueCount ? `<span style="font-size: 10.5px; color: #888;">(${g.totalPositions} pos.)</span>` : ''}
+            </td>
+            <td>${this.formatMeliPrice(g.medianPrice)}</td>
+            <td><strong>${number.format(g.medianDailyGiro)}</strong> un./dia</td>
+            <td><strong>${money.format(g.projectedMonthlyRevenue)}</strong></td>
+            <td><span class="cl-intel-badge-pro" style="background: #eef2ff; color: #4338ca;">${g.revenueShare.toFixed(1)}%</span></td>
+            <td><strong style="color: #00a650;">${(g.medianReturnRatio * 100).toFixed(1)}%</strong></td>
+            <td>
+              <span class="cl-iqv-pill" style="padding: 2px 7px; border-radius: 999px; background: ${iqvColor}15; color: ${iqvColor}; font-weight: 700; font-size: 11.5px; display: inline-flex; align-items: center; gap: 4px;">
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: ${iqvColor};"></span>
+                ${iqvScore} (${iqvClass})
+              </span>
+            </td>
+            <td>
+              <button type="button" class="cl-intel-cat-btn" data-cat-select="${escapeHtml(g.key)}">
+                ${isSelected ? 'Fechar' : `Ver anúncios (${g.uniqueCount})`}
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      // Section D: Filters distribution
+      const filters = catData.searchContext?.filters || [];
+      const filtersHtml = filters.length > 0
+        ? filters.slice(0, 8).map((grp) => {
+            const pills = grp.values.slice(0, 10).map((val) => `
+              <span class="cl-intel-filter-pill ${val.isActive ? 'is-active' : ''}">
+                ${escapeHtml(val.name)} ${val.count > 0 ? `<small>(${number.format(val.count)})</small>` : ''}
+              </span>
+            `).join("");
+            return `
+              <div class="cl-intel-filter-group">
+                <span class="cl-intel-filter-group__title">${escapeHtml(grp.name)}</span>
+                <div class="cl-intel-filter-group__pills">${pills}</div>
+              </div>
+            `;
+          }).join("")
+        : `<div style="color: #888; font-size: 12px; padding: 8px 0;">Filtros oficiais do Mercado Livre sincronizados localmente conforme o carregamento da busca.</div>`;
+
+      // Section E: Selected Subcategory Products Drawer
+      let drawerHtml = "";
+      if (this.selectedSubcategory) {
+        const selectedGroup = sortedGroups.find((g) => g.key === this.selectedSubcategory);
+        if (selectedGroup) {
+          const cardsHtml = selectedGroup.items.map((it) => {
+            const img = it.data.thumbnail
+              ? `<img class="cl-ml-card__img" src="${escapeHtml(it.data.thumbnail)}" alt="${escapeHtml(it.data.title)}" loading="lazy" />`
+              : `<div style="font-size: 40px; color: #cbd5e1;">📦</div>`;
+            const giro = it.advanced?.salesPerDay != null ? `${number.format(it.advanced.salesPerDay)} un./dia` : "—";
+            const fat = it.advanced?.monthlyRevenue != null ? money.format(it.advanced.monthlyRevenue) : "—";
+            return `
+              <div class="cl-ml-card" style="padding: 10px;">
+                <div class="cl-ml-card__portada" style="height: 120px;">
+                  ${img}
+                </div>
+                <div class="cl-ml-card__body" style="padding: 8px 4px 4px;">
+                  <h4 class="cl-ml-card__title" style="font-size: 12px; line-height: 1.3;" title="${escapeHtml(it.data.title)}">
+                    <a href="${escapeHtml(it.data.permalink)}" target="_blank">${escapeHtml(it.data.title)}</a>
+                  </h4>
+                  <div style="margin-top: 4px;">
+                    ${this.formatMeliPrice(it.data.price)}
+                  </div>
+                  <div class="cl-ml-card__tags" style="margin-top: 4px;">
+                    ${it.data.isFull ? '<span class="cl-ml-tag-full">⚡ FULL</span>' : ''}
+                    ${it.data.isSponsored ? '<span class="cl-intel-badge-pro" style="background:#fef3c7;color:#92400e;">Patrocinado</span>' : ''}
+                  </div>
+                  <div style="margin-top: 8px; font-size: 11px; color: #555; display: flex; flex-direction: column; gap: 2px;">
+                    <div>Giro diário: <strong style="color: #00a650;">${giro}</strong></div>
+                    <div>Fat. mensal: <strong>${fat}</strong></div>
+                  </div>
+                  <a class="cl-ml-card__btn" style="margin-top: 8px; padding: 5px;" href="${escapeHtml(it.data.permalink)}" target="_blank">
+                    Ver no Mercado Livre ↗
+                  </a>
+                </div>
+              </div>
+            `;
+          }).join("");
+
+          drawerHtml = `
+            <div class="cl-intel-card" style="margin-top: 20px; border: 1.5px solid #3483fa; background: #fafbff;">
+              <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 14px;">
+                <div>
+                  <h3 style="font-size: 15px; font-weight: 700; color: #1e293b; margin: 0;">
+                    Anúncios da Subcategoria: <span style="color: #3483fa;">${escapeHtml(selectedGroup.name)}</span>
+                  </h3>
+                  <span style="font-size: 11.5px; color: #64748b;">Mostrando ${selectedGroup.items.length} anúncios capturados</span>
+                </div>
+                <button type="button" class="cl-intel-cat-close-btn" data-cat-clear>✕ Fechar lista</button>
+              </div>
+              <div class="cl-ml-cards-grid" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px;">
+                ${cardsHtml}
+              </div>
+            </div>
+          `;
+        }
+      }
+
+      // Section F: Related searches
+      const related = catData.searchContext?.relatedSearches || [];
+      const relatedHtml = related.length > 0
+        ? `
+          <div class="cl-intel-card" style="margin-top: 16px;">
+            <div class="cl-intel-section-title">
+              <span>Palavras-chave e Buscas Relacionadas pelo Mercado Livre</span>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
+              ${related.map((r) => `
+                <div class="cl-intel-related-pill">
+                  <span>${escapeHtml(r.term)}</span>
+                  <span class="cl-intel-badge-pro" style="background: ${r.badgeColor}15; color: ${r.badgeColor};">
+                    ${r.relevanceLabel} (${r.score}%)
+                  </span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `
+        : "";
+
+      return `
+        <!-- Seção A: KPIs Gerais -->
+        <div class="cl-intel-kpis">
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Subcategorias Detectadas</div>
+            <div class="cl-intel-kpi__value">${sortedGroups.length}</div>
+            <div class="cl-intel-kpi__sub">Segmentos mapeados na busca</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Subcategoria Líder</div>
+            <div class="cl-intel-kpi__value" style="font-size: 18px; color: #3483fa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(topName)}">${escapeHtml(topName)}</div>
+            <div class="cl-intel-kpi__sub">Concentra <strong>${topShare}%</strong> do faturamento</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Deduplicação de Anúncios</div>
+            <div class="cl-intel-kpi__value" style="color: #059669;">${catData.uniqueAdsCount} <small style="font-size: 13px; font-weight: 500; color: #64748b;">únicos</small></div>
+            <div class="cl-intel-kpi__sub">${catData.duplicatedPositions > 0 ? `${catData.duplicatedPositions} patrocinados duplicados unificados` : 'Sem sobreposições patrocinadas'}</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Faturamento Total Projetado</div>
+            <div class="cl-intel-kpi__value">${money.format(catData.aggregatedRevenue)}</div>
+            <div class="cl-intel-kpi__sub">Soma consolidada sem duplicações</div>
+          </div>
+        </div>
+
+        <!-- Insight -->
+        <div class="cl-intel-insight">
+          <span style="font-size: 18px;">💡</span>
+          <div>${catData.insight}</div>
+        </div>
+
+        <!-- Seção C: Gráfico de Composição Comercial -->
+        <div class="cl-intel-card" style="margin-top: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+            <div class="cl-intel-section-title" style="margin: 0;">
+              <span>Composição da Pesquisa por Subcategoria</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #555;">
+              <span>Métrica do gráfico:</span>
+              <select class="cl-intel-select" data-cat-metric>
+                <option value="revenue" ${this.categoryMetric === 'revenue' ? 'selected' : ''}>Faturamento Projetado (R$)</option>
+                <option value="giro" ${this.categoryMetric === 'giro' ? 'selected' : ''}>Giro Diário Agregado (un./dia)</option>
+                <option value="ads" ${this.categoryMetric === 'ads' ? 'selected' : ''}>Quantidade de Anúncios</option>
+              </select>
+            </div>
+          </div>
+          <div class="cl-intel-bars">
+            ${barsHtml}
+          </div>
+        </div>
+
+        <!-- Seção B: Mapa Comparativo de Subcategorias -->
+        <div class="cl-intel-card" style="padding: 0; overflow: hidden; margin-top: 16px;">
+          <div style="padding: 14px 16px; border-bottom: 1px solid rgba(0, 0, 0, 0.08); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <div class="cl-intel-section-title" style="margin: 0;">Mapa Comparativo de Subcategorias / Domínios</div>
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #555;">
+              <span>Ordenar por:</span>
+              <select class="cl-intel-select" data-cat-sort>
+                <option value="revenue" ${this.categorySort === 'revenue' ? 'selected' : ''}>Maior Faturamento</option>
+                <option value="giro" ${this.categorySort === 'giro' ? 'selected' : ''}>Maior Giro Diário</option>
+                <option value="ads" ${this.categorySort === 'ads' ? 'selected' : ''}>Mais Anúncios</option>
+                <option value="iqv" ${this.categorySort === 'iqv' ? 'selected' : ''}>Maior IQV</option>
+                <option value="margin" ${this.categorySort === 'margin' ? 'selected' : ''}>Maior Repasse Líquido</option>
+              </select>
+            </div>
+          </div>
+          <div class="cl-intel-table-wrap" style="border: 0; border-radius: 0;">
+            <table class="cl-intel-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Subcategoria / Domínio</th>
+                  <th>Anúncios</th>
+                  <th>Preço Mediano</th>
+                  <th>Giro Diário</th>
+                  <th>Faturamento Projetado</th>
+                  <th>Share Fat.</th>
+                  <th>Repasse Líquido</th>
+                  <th>IQV da Subcategoria</th>
+                  <th>Ação</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Seção E: Gaveta de Anúncios da Subcategoria -->
+        ${drawerHtml}
+
+        <!-- Seção D: Filtros Oficiais do Mercado Livre -->
+        <div class="cl-intel-card" style="margin-top: 16px;">
+          <div class="cl-intel-section-title">
+            <span>Filtros Oficiais do Mercado Livre (Segmentação de Catálogo)</span>
+          </div>
+          <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 12px;">
+            ${filtersHtml}
+          </div>
+        </div>
+
+        <!-- Seção F: Termos e Buscas Relacionadas -->
+        ${relatedHtml}
+      `;
+    }
+
     bindEvents() {
       // Close button
       this.root.querySelector("[data-intel-close]")?.addEventListener("click", () => this.close());
@@ -3118,6 +3955,27 @@
       });
       this.root.querySelector("[data-intel-pricing-metric]")?.addEventListener("change", (e) => {
         this.priceMetric = e.target.value;
+        this.render();
+      });
+
+      // Category tab events
+      this.root.querySelector("[data-cat-sort]")?.addEventListener("change", (e) => {
+        this.categorySort = e.target.value;
+        this.render();
+      });
+      this.root.querySelector("[data-cat-metric]")?.addEventListener("change", (e) => {
+        this.categoryMetric = e.target.value;
+        this.render();
+      });
+      this.root.querySelectorAll("[data-cat-select]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const key = btn.dataset.catSelect;
+          this.selectedSubcategory = this.selectedSubcategory === key ? null : key;
+          this.render();
+        });
+      });
+      this.root.querySelector("[data-cat-clear]")?.addEventListener("click", () => {
+        this.selectedSubcategory = null;
         this.render();
       });
 
