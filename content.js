@@ -253,12 +253,12 @@
       const estimatedCreationDate = this.pictureDate(pictureId);
       const creationDate = explicitCreationDate ?? estimatedCreationDate;
       if (!soldQuantity && !creationDate) return null;
-      const price = asNumber(eventData.price?.value ?? eventData.price ?? candidate.price?.value ?? candidate.price);
+      const price = asNumber(candidate.components?.price?.price?.value ?? candidate.schema?.[0]?.offers?.price ?? eventData.price?.value ?? eventData.price ?? candidate.price?.value ?? candidate.price);
       const estimatedDaysActive = creationDate ? Math.max(1, Math.ceil((Date.now() - creationDate.valueOf()) / 86400000)) : 0;
       const salesPerDay = soldQuantity && estimatedDaysActive ? soldQuantity / estimatedDaysActive : 0;
       return {
         identifiers,
-        title: eventData.title ?? candidate.title ?? "",
+        title: eventData.title ?? candidate.title ?? candidate.components?.header?.title?.text ?? candidate.schema?.[0]?.name ?? "",
         price,
         soldQuantity,
         creationDate,
@@ -373,9 +373,9 @@
 
     static normalize(initialState) {
       if (!initialState) return null;
-      const track = initialState.track ?? this.findObjectWithKey(initialState, "melidata_event")?.track ?? this.findObjectWithKey(initialState, "event_data");
-      const eventData = track?.melidata_event?.event_data ?? track?.event_data ?? initialState?.track?.melidata_event?.event_data ?? {};
       const components = initialState.components ?? {};
+      const track = initialState.track ?? components.track ?? this.findObjectWithKey(initialState, "melidata_event")?.track ?? this.findObjectWithKey(initialState, "event_data");
+      const eventData = track?.melidata_event?.event_data ?? track?.event_data ?? initialState?.track?.melidata_event?.event_data ?? {};
       const gallery = components.gallery ?? eventData.gallery ?? {};
       const promotions = Array.isArray(eventData.available_promotions) ? eventData.available_promotions : [];
       const promotion = promotions[0] ?? {};
@@ -398,21 +398,44 @@
       const creationDateIsEstimated = !explicitCreationDate;
       const estimatedDaysActive = creationDate ? Math.max(1, Math.ceil((Date.now() - creationDate.valueOf()) / 86400000)) : 0;
       const soldQuantity = asNumber(eventData.sold_quantity);
-      const price = asNumber(eventData.price);
+
+      const priceComponent = components.price ?? {};
+      const lightningComponent = components.lightning_promotions ?? {};
+      const schemaOffer = (Array.isArray(initialState.schema) ? initialState.schema : [initialState.schema]).map((s) => s?.offers).find(Boolean) ?? {};
+
+      const componentPrice = asNumber(priceComponent.price?.value);
+      const schemaPrice = asNumber(schemaOffer.price);
+      const eventPrice = asNumber(eventData.price);
+      const price = componentPrice || schemaPrice || eventPrice;
+
+      const componentOriginal = asNumber(priceComponent.price?.original_value);
+      const eventOriginal = asNumber(eventData.original_price);
+      const promoOriginal = asNumber(promotion.original_value);
+      const originalPrice = componentOriginal || promoOriginal || eventOriginal;
+
+      const isLightning = lightningComponent.state === "VISIBLE"
+        || /rel[aâ]mpago/i.test(lightningComponent.promotion_title?.accessibility_text ?? "")
+        || promotions.some((p) => p.type === "lightning");
+      const campaignType = isLightning ? "lightning" : (promotion.type ?? "");
+
+      const otherMethodsPrice = asNumber(priceComponent.subtitles?.[0]?.values?.total_price?.value) || eventPrice;
+      const pixDiscount = asNumber(priceComponent.price_breakdown?.discount?.action?.track?.melidata_event?.event_data?.campaigns?.[0]?.amount?.value);
+
       const salesPerDay = estimatedDaysActive > 0 ? soldQuantity / estimatedDaysActive : 0;
       const fulfillmentOrigin = eventData.shipping_promise?.address_options?.[0]?.origins?.[0];
       const tags = Array.isArray(eventData.tags) ? eventData.tags : [];
       const subtitles = Array.isArray(eventData.subtitle_types) ? eventData.subtitle_types : [];
       const reviewRate = asNumber(eventData.review_rate ?? reviewsComponent?.rating_average);
       const reviewCount = asNumber(reviewsComponent?.reviews_count ?? reviewsComponent?.total ?? reviews.length);
+      const title = eventData.title ?? initialState.title ?? components.header?.title?.text ?? initialState.schema?.[0]?.name ?? "";
 
       return {
         hasDeepData: true,
-        title: eventData.title ?? initialState.title ?? "",
+        title,
         itemId: eventData.item_id ?? "", userProductId: eventData.user_product_id ?? "", familyId: eventData.family_id ?? "",
         pageType: eventData.page_type ?? "", categoryId: eventData.category_id ?? "", domainId: eventData.domain_id ?? "",
-        price, originalPrice: asNumber(eventData.original_price), meliSubsidy: asNumber(promotion.discount_meli_amount),
-        campaignType: promotion.type ?? "", wholesaleShortcuts: shortcuts.map((item) => ({ quantity: asNumber(item.quantity), price: asNumber(item.price?.value) })).filter((item) => item.quantity && item.price),
+        price, otherMethodsPrice, pixDiscount, originalPrice, meliSubsidy: asNumber(promotion.discount_meli_amount),
+        campaignType, wholesaleShortcuts: shortcuts.map((item) => ({ quantity: asNumber(item.quantity), price: asNumber(item.price?.value) })).filter((item) => item.quantity && item.price),
         installments: { installments: asNumber(recommended.installments), installmentAmount: asNumber(recommended.installment_amount), isFreeInstallment: Boolean(recommended.is_free_installment) },
         listingTypeId: eventData.listing_type_id ?? "gold_special", logisticType: eventData.logistic_type ?? "", shippingMode: eventData.shipping_mode ?? "",
         billableWeightGrams: asNumber(eventData.shipping_promise?.billable_weight, 0), fulfillmentCenter: fulfillmentOrigin?.value ?? "",
@@ -572,8 +595,12 @@
       if (!container) return 0;
       const metaPrice = container.matches?.('meta[itemprop="price"]') ? container.getAttribute("content") : container.querySelector?.('meta[itemprop="price"]')?.getAttribute("content");
       if (metaPrice && Number.isFinite(Number(metaPrice))) return Number(metaPrice);
-      const fraction = container.querySelector(".andes-money-amount__fraction")?.textContent?.replace(/\D/g, "") ?? "0";
-      const cents = container.querySelector(".andes-money-amount__cents")?.textContent?.replace(/\D/g, "") ?? "0";
+      const target = container.matches?.("s, .andes-money-amount--previous, .ui-pdp-price__original-value") ? container
+        : (container.querySelector?.(".andes-money-amount:not(s *):not(.andes-money-amount--previous):not(.ui-pdp-price__original-value *)") ?? container);
+      const fraction = target.querySelector?.(".andes-money-amount__fraction")?.textContent?.replace(/\D/g, "")
+        ?? container.querySelector?.(".andes-money-amount__fraction")?.textContent?.replace(/\D/g, "") ?? "0";
+      const cents = target.querySelector?.(".andes-money-amount__cents")?.textContent?.replace(/\D/g, "")
+        ?? container.querySelector?.(".andes-money-amount__cents")?.textContent?.replace(/\D/g, "") ?? "0";
       return asNumber(`${fraction}.${cents.padEnd(2, "0")}`);
     }
 
@@ -585,9 +612,11 @@
       const fullNode = card.querySelector('svg use[href="#poly_full"], .poly-component__shipped-from, .ui-search-item__shipping');
       const moneyNodes = [...card.querySelectorAll(".andes-money-amount")];
       const current = card.querySelector(".poly-price__current .andes-money-amount, .poly-price__current, .ui-search-price__part--medium:not(.andes-money-amount--previous)")
-        ?? moneyNodes.find((node) => !node.matches("s, .andes-money-amount--previous") && !node.closest("s") && !node.classList.contains("andes-money-amount--previous"));
-      const original = card.querySelector("s.andes-money-amount, .andes-money-amount--previous");
+        ?? moneyNodes.find((node) => !node.matches("s, .andes-money-amount--previous, .ui-search-price__part--previous") && !node.closest("s, .andes-money-amount--previous") && !node.classList.contains("andes-money-amount--previous"));
+      const original = card.querySelector("s.andes-money-amount, .andes-money-amount--previous, .ui-search-price__part--previous .andes-money-amount");
       const text = card.textContent ?? "";
+      const isLightning = Boolean(card.querySelector(".poly-component__promotions, .poly-tag, [aria-label*='relâmpago' i], [aria-label*='relampago' i]"))
+        || /oferta\s+rel[aâ]mpago/i.test(text);
       const soldMatch = text.match(/(?:mais\s+de\s+|\+\s*)?([\d.,]+)\s*(milh(?:a|ã)o|mil|mi|m)?\s+(?:produtos?\s+)?vendidos?/i);
       const soldBase = soldMatch ? asNumber(soldMatch[1].replace(/\.(?=\d{3}(?:\D|$))/g, "").replace(",", ".")) : 0;
       const soldUnit = soldMatch?.[2]?.toLocaleLowerCase("pt-BR") ?? "";
@@ -606,6 +635,7 @@
         permalink: titleLink?.href ?? "", identifiers,
         thumbnail,
         price: this.parseMoney(current), originalPrice: this.parseMoney(original),
+        campaignType: isLightning ? "lightning" : "",
         listingTypeId: /sem\s+juros/i.test(installment) || /rgb\(0,\s*166,\s*80\)|#00a650/i.test(card.querySelector(".poly-price__installments")?.getAttribute("style") ?? "") ? "gold_pro" : "gold_special",
         logisticType: fullNode ? "fulfillment" : "", isFull: Boolean(fullNode), isSponsored: /patrocinado/i.test(text) || Boolean(card.querySelector('[aria-label="Patrocinado"], .poly-component__ads-promotions')),
         soldQuantity, reviewRate: ratingMatch ? asNumber(ratingMatch[1].replace(",", ".")) : 0
@@ -613,9 +643,16 @@
     }
 
     static fromPdp() {
-      const priceRoot = document.querySelector("[data-testid='price-part'] .andes-money-amount, [data-testid='price-part'], .ui-pdp-price__second-line .andes-money-amount, .ui-pdp-price__main-part .andes-money-amount, meta[itemprop='price'], .ui-pdp-price__second-line, #price");
-      const price = this.parseMoney(priceRoot);
-      const text = document.body.textContent ?? "";
+      const moneyNodes = [...document.querySelectorAll(".ui-pdp-price .andes-money-amount, [data-testid='price-part'] .andes-money-amount, .ui-pdp-price__second-line .andes-money-amount, .andes-money-amount")];
+      const current = document.querySelector(".ui-pdp-price__second-line .andes-money-amount:not(.andes-money-amount--previous):not(s *), .ui-pdp-price__main-part .andes-money-amount:not(.andes-money-amount--previous):not(s *):not(.ui-pdp-price__original-value *), [data-testid='price-part'] .andes-money-amount:not(.andes-money-amount--previous):not(s *)")
+        ?? moneyNodes.find((node) => !node.matches("s, .andes-money-amount--previous, .ui-pdp-price__original-value") && !node.closest("s, .andes-money-amount--previous, .ui-pdp-price__original-value, .ui-pdp-price__subtitles, .ui-pdp-price__installments, [data-testid='installments']"));
+      const original = document.querySelector("s.andes-money-amount, .andes-money-amount--previous, .ui-pdp-price__original-value .andes-money-amount, .ui-pdp-price__original-value");
+      const metaPrice = document.querySelector('meta[itemprop="price"]')?.getAttribute("content");
+      const price = this.parseMoney(current) || asNumber(metaPrice);
+      const originalPrice = this.parseMoney(original);
+      const text = document.body?.textContent ?? "";
+      const isLightning = Boolean(document.querySelector(".ui-pdp-promotions-pill, [aria-label*='relâmpago' i], [aria-label*='relampago' i]"))
+        || /oferta\s+rel[aâ]mpago/i.test(text);
       const quantityText = document.querySelector("#buybox_available_quantity, [data-testid='quantity-selector-trigger'], .ui-pdp-buybox__quantity")?.textContent ?? "";
       const quantityMatch = quantityText.match(/\((\d+)\s+dispon/i);
       const ratingText = document.querySelector(".ui-pdp-review__rating, .ui-pdp-review__ratings, [data-testid='review-summary']")?.textContent ?? "";
@@ -625,6 +662,8 @@
         title: document.querySelector("h1.ui-pdp-title")?.textContent?.trim() ?? document.title,
         itemId: document.querySelector('input[name="item_id"]')?.value ?? document.querySelector('[data-item-id]')?.getAttribute("data-item-id") ?? "",
         price,
+        originalPrice,
+        campaignType: isLightning ? "lightning" : "",
         listingTypeId: /sem\s+juros/i.test(document.querySelector(".ui-pdp-price")?.textContent ?? "") ? "gold_pro" : "gold_special",
         logisticType: /FULL/i.test(text) ? "fulfillment" : "",
         billableWeightGrams: 0, meliSubsidy: 0, soldQuantity: 0, availableStock: quantityMatch ? asNumber(quantityMatch[1]) : 0, salesPerDay: 0, salesPerMonth: 0,
@@ -753,6 +792,7 @@
           </div>
         </header>
         <div class="cl-badges cl-buybox-analysis__badges">
+          ${data.campaignType === "lightning" ? `<span class="cl-badge cl-badge--yellow">⚡ Oferta Relâmpago</span>` : ""}
           <span class="cl-badge cl-badge--blue">🏷️ ${this.listingName(data)} ${number.format(commission)}%</span>
           <span class="cl-badge cl-badge--green">⚡ ${this.logisticsName(data.logisticType)}${center ? ` · ${escapeHtml(center)}` : ""}</span>
           <span class="cl-badge">⚖️ ${data.billableWeightGrams ? `${number.format(data.billableWeightGrams)} g real` : `${number.format(this.settings.defaultWeight)} g padrão`}</span>
@@ -778,9 +818,19 @@
       const availableAfterCosts = calc.netPayout - calc.extras;
       return `<dl class="cl-buybox-list">
         <div>
-          <dt>Preço de venda atual</dt>
+          <div class="cl-buybox-item__col">
+            <dt>Preço de venda atual</dt>
+            ${this.data.originalPrice && this.data.originalPrice > calc.price ? `<span class="cl-subtext">De <s>${money.format(this.data.originalPrice)}</s> (${Math.round((1 - calc.price / this.data.originalPrice) * 100)}% OFF)</span>` : ""}
+          </div>
           <dd>${money.format(calc.price)}</dd>
         </div>
+        ${this.data.otherMethodsPrice && this.data.otherMethodsPrice > calc.price ? `<div>
+          <div class="cl-buybox-item__col">
+            <dt>Outros meios de pagamento</dt>
+            <span class="cl-subtext">Cartão / parcelado</span>
+          </div>
+          <dd>${money.format(this.data.otherMethodsPrice)}</dd>
+        </div>` : ""}
         <div>
           <div class="cl-buybox-item__col">
             <dt>Comissão do Mercado Livre</dt>
@@ -966,7 +1016,7 @@
       const { data, panel } = item;
       const calc = this.calculation(data);
       panel.innerHTML = `<div class="cl-poly__header"><div><strong>Calculadora Livre</strong><span>Estimativa do anúncio</span></div></div>
-        <div class="cl-badges"><span class="cl-badge cl-badge--blue">${data.listingTypeId === "gold_pro" ? "Premium" : "Clássico"} · ${number.format(this.commission(data))}%</span>${data.logisticType === "fulfillment" ? '<span class="cl-badge cl-badge--green">Full</span>' : ""}${data.isSponsored ? '<span class="cl-badge cl-badge--yellow">Publicidade 3%</span>' : ""}</div>
+        <div class="cl-badges">${data.campaignType === "lightning" ? '<span class="cl-badge cl-badge--yellow">⚡ Oferta Relâmpago</span>' : ""}<span class="cl-badge cl-badge--blue">${data.listingTypeId === "gold_pro" ? "Premium" : "Clássico"} · ${number.format(this.commission(data))}%</span>${data.logisticType === "fulfillment" ? '<span class="cl-badge cl-badge--green">Full</span>' : ""}${data.isSponsored ? '<span class="cl-badge cl-badge--yellow">Publicidade 3%</span>' : ""}</div>
         <dl class="cl-search-metrics">
           <div><dt>Preço</dt><dd>${money.format(calc.price)}</dd></div>
           <div><dt>Comissão</dt><dd class="cl-negative">− ${money.format(calc.commission)}</dd></div>
