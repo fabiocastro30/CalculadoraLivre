@@ -5,22 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Calculadora Livre</title>
     <style>
-      :root { color-scheme: light; --blue:#3483fa; --green:#00a650; --yellow:#ffe600; --ink:#333; --muted:#666; --line:#ddd; --surface:#fff; --bg:#f5f5f5; }
+      :root { color-scheme: light; --blue:#3483fa; --orange:#ee4d2d; --green:#00a650; --yellow:#ffe600; --ink:#333; --muted:#666; --line:#ddd; --surface:#fff; --bg:#f5f5f5; }
       * { box-sizing:border-box; }
       body { width:380px; margin:0; background:var(--bg); color:var(--ink); font-family:"Proxima Nova",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
       header { padding:18px 20px; background:var(--yellow); }
       header h1 { margin:0; font-size:22px; letter-spacing:-.3px; }
       header p { margin:4px 0 0; color:#555; font-size:13px; }
       main { padding:16px; }
+      .tabs { display:flex; gap:4px; margin-bottom:14px; background:#e6e6e6; padding:3px; border-radius:8px; }
+      .tab-btn { flex:1; border:0; background:transparent; padding:8px; font:inherit; font-size:12px; font-weight:700; color:var(--muted); border-radius:6px; cursor:pointer; transition:all 0.15s ease; }
+      .tab-btn.active { background:var(--surface); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+      .tab-btn[data-tab="tab-shopee"].active { color:var(--orange); }
+      .tab-btn[data-tab="tab-meli"].active { color:var(--blue); }
       form { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+      .tab-pane { grid-column:1 / -1; display:none; grid-template-columns:1fr 1fr; gap:12px; }
+      .tab-pane.active { display:grid; }
       label { display:flex; flex-direction:column; gap:5px; font-size:12px; font-weight:600; color:var(--muted); }
       input[type="number"] { width:100%; border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; font-size:14px; color:var(--ink); background:var(--surface); outline:none; }
       input[type="number"]:focus { border-color:var(--blue); box-shadow:0 0 0 1px var(--blue); }
+      .tab-pane#tab-shopee input[type="number"]:focus { border-color:var(--orange); box-shadow:0 0 0 1px var(--orange); }
       .full { grid-column:1 / -1; }
       .toggle { flex-direction:row; align-items:center; justify-content:space-between; border:1px solid var(--line); background:var(--surface); border-radius:8px; padding:12px; color:var(--ink); }
       .toggle input { width:18px; height:18px; accent-color:var(--blue); }
-      button { grid-column:1 / -1; border:0; border-radius:6px; padding:12px; background:var(--blue); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
-      button:hover { background:#2968c8; }
+      button[type="submit"] { grid-column:1 / -1; border:0; border-radius:6px; padding:12px; background:var(--blue); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+      button[type="submit"]:hover { background:#2968c8; }
+      button[type="submit"].shopee-active { background:var(--orange); }
+      button[type="submit"].shopee-active:hover { background:#d73211; }
       #status { grid-column:1 / -1; min-height:18px; margin:0; text-align:center; font-size:12px; color:var(--green); }
       footer { padding:0 16px 16px; color:#777; font-size:11px; text-align:center; }
     </style>
@@ -31,13 +41,29 @@
       <p>Configurações de precificação</p>
     </header>
     <main>
+      <div class="tabs">
+        <button type="button" class="tab-btn active" data-tab="tab-meli">Mercado Livre</button>
+        <button type="button" class="tab-btn" data-tab="tab-shopee">Shopee</button>
+      </div>
       <form id="settings-form">
-        <label>Imposto padrão (%)<input id="taxPercent" name="taxPercent" type="number" min="0" max="100" step="0.1" required></label>
-        <label>Embalagem (R$)<input id="packagingCost" name="packagingCost" type="number" min="0" step="0.01" required></label>
-        <label>Comissão Clássico (%)<input id="classicCommission" name="classicCommission" type="number" min="0" max="100" step="0.1" required></label>
-        <label>Comissão Premium (%)<input id="premiumCommission" name="premiumCommission" type="number" min="0" max="100" step="0.1" required></label>
-        <label class="toggle full" for="considerSubsidy"><span>Considerar subsídio do ML no recebimento</span><input id="considerSubsidy" name="considerSubsidy" type="checkbox"></label>
-        <button type="submit">Salvar configurações</button>
+        <div id="tab-meli" class="tab-pane active">
+          <label>Imposto padrão (%)<input id="taxPercent" name="taxPercent" type="number" min="0" max="100" step="0.1" required></label>
+          <label>Embalagem (R$)<input id="packagingCost" name="packagingCost" type="number" min="0" step="0.01" required></label>
+          <label>Comissão Clássico (%)<input id="classicCommission" name="classicCommission" type="number" min="0" max="100" step="0.1" required></label>
+          <label>Comissão Premium (%)<input id="premiumCommission" name="premiumCommission" type="number" min="0" max="100" step="0.1" required></label>
+          <label class="toggle full" for="considerSubsidy"><span>Considerar subsídio do ML no recebimento</span><input id="considerSubsidy" name="considerSubsidy" type="checkbox"></label>
+        </div>
+
+        <div id="tab-shopee" class="tab-pane">
+          <label>Comissão Shopee (%)<input id="shopeeCommissionPercent" name="shopeeCommissionPercent" type="number" min="0" max="100" step="0.1" required></label>
+          <label>Tarifa fixa / item (R$)<input id="shopeeFixedFee" name="shopeeFixedFee" type="number" min="0" step="0.01" required></label>
+          <label>Teto comissão (R$)<input id="shopeeMaxCommission" name="shopeeMaxCommission" type="number" min="0" step="0.01" required></label>
+          <label>Imposto padrão (%)<input id="shopeeTaxPercent" name="shopeeTaxPercent" type="number" min="0" max="100" step="0.1" required></label>
+          <label>Embalagem (R$)<input id="shopeePackagingCost" name="shopeePackagingCost" type="number" min="0" step="0.01" required></label>
+          <label>Shopee Ads (%)<input id="shopeeAdsPercent" name="shopeeAdsPercent" type="number" min="0" max="100" step="0.1" required></label>
+        </div>
+
+        <button type="submit" id="submit-btn">Salvar configurações</button>
         <p id="status" role="status" aria-live="polite"></p>
       </form>
     </main>

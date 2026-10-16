@@ -1,0 +1,572 @@
+/* Calculadora Livre — Estilos Nativos da Shopee */
+
+:root {
+  --cl-shopee-orange: #ee4d2d;
+  --cl-shopee-orange-soft: #fff3ef;
+  --cl-shopee-orange-hover: #d73211;
+  --cl-shopee-teal: #26aa99;
+  --cl-shopee-teal-soft: #eaf7f5;
+  --cl-shopee-red: #e11d48;
+  --cl-shopee-red-soft: #fff1f2;
+  --cl-shopee-text: #222222;
+  --cl-shopee-muted: #757575;
+  --cl-shopee-line: #eaeaea;
+  --cl-shopee-surface: #ffffff;
+  --cl-shopee-bg: #fafafa;
+}
+
+/* ==========================================================================
+   BANNER DE REPASSE (Abaixo do Preço)
+   ========================================================================== */
+.cl-shopee-price-payout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 14px 0;
+  padding: 10px 14px;
+  background-color: var(--cl-shopee-orange-soft);
+  border: 1px solid #ffd8cc;
+  border-radius: 6px;
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--cl-shopee-text);
+  box-sizing: border-box;
+}
+
+.cl-shopee-payout-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--cl-shopee-orange);
+}
+
+.cl-shopee-payout-value {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--cl-shopee-teal);
+  letter-spacing: -0.3px;
+  line-height: 1.2;
+}
+
+.cl-shopee-payout-note {
+  font-size: 11px;
+  color: var(--cl-shopee-muted);
+  line-height: 1.4;
+}
+
+/* ==========================================================================
+   PAINEL PRINCIPAL DE ANÁLISE (PDP WIDGET)
+   ========================================================================== */
+.cl-shopee-root.cl-shopee-pdp-panel {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 16px 0;
+  padding: 18px 20px;
+  background-color: var(--cl-shopee-surface);
+  border: 1px solid var(--cl-shopee-line);
+  border-top: 3px solid var(--cl-shopee-orange);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--cl-shopee-text);
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.cl-shopee-root * {
+  box-sizing: border-box;
+}
+
+/* HEADER */
+.cl-shopee-header {
+  margin-bottom: 14px;
+}
+
+.cl-shopee-header__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cl-shopee-brand-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  background-color: var(--cl-shopee-orange);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  border-radius: 4px;
+}
+
+.cl-shopee-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--cl-shopee-text);
+  line-height: 1.2;
+}
+
+.cl-shopee-header__subtitle {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: var(--cl-shopee-muted);
+}
+
+/* BADGES */
+.cl-shopee-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.cl-shopee-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background-color: #f5f5f5;
+  color: var(--cl-shopee-text);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.cl-shopee-badge--orange {
+  background-color: var(--cl-shopee-orange-soft);
+  color: var(--cl-shopee-orange);
+  border: 1px solid #ffdacf;
+}
+
+.cl-shopee-badge--gray {
+  background-color: #f0f0f0;
+  color: #555555;
+}
+
+.cl-shopee-badge--red {
+  background-color: var(--cl-shopee-red-soft);
+  color: var(--cl-shopee-red);
+  border: 1px solid #fecdd3;
+}
+
+/* BREAKDOWN LIST */
+.cl-shopee-list {
+  margin: 0 0 16px 0;
+  padding: 0;
+  border-top: 1px solid var(--cl-shopee-line);
+}
+
+.cl-shopee-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+}
+
+.cl-shopee-item__col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cl-shopee-list dt {
+  font-weight: 500;
+  color: var(--cl-shopee-text);
+}
+
+.cl-shopee-subtext {
+  font-size: 11px;
+  color: var(--cl-shopee-muted);
+}
+
+.cl-shopee-subtext--green {
+  color: var(--cl-shopee-teal);
+  font-weight: 600;
+}
+
+.cl-shopee-list dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cl-shopee-negative {
+  color: var(--cl-shopee-red) !important;
+}
+
+.cl-shopee-money--green {
+  color: var(--cl-shopee-teal) !important;
+}
+
+/* HIGHLIGHT BOX */
+.cl-shopee-highlight {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background-color: #fafbfc;
+  border: 1px solid #e1e7ec;
+  border-left: 4px solid var(--cl-shopee-teal);
+  border-radius: 6px;
+}
+
+.cl-shopee-highlight__main {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.cl-shopee-highlight__main dt {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cl-shopee-text);
+}
+
+.cl-shopee-payout-number {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--cl-shopee-teal);
+}
+
+.cl-shopee-net-after-costs {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-top: 6px;
+  border-top: 1px dashed #dce2e6;
+  font-size: 12px;
+}
+
+.cl-shopee-net-after-costs dt {
+  font-weight: 600;
+  color: var(--cl-shopee-text);
+}
+
+.cl-shopee-net-after-costs dd {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.cl-shopee-disclaimer {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  color: #8c8c8c;
+  line-height: 1.3;
+}
+
+/* ==========================================================================
+   SIMULADORES INTERATIVOS
+   ========================================================================== */
+.cl-shopee-simulator {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px;
+  background-color: #fbfbfb;
+  border: 1px solid var(--cl-shopee-line);
+  border-radius: 6px;
+}
+
+.cl-shopee-manual-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cl-shopee-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cl-shopee-field__label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #555555;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cl-shopee-input {
+  width: 100%;
+  padding: 8px 12px;
+  background-color: #ffffff;
+  border: 1px solid #cccccc;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cl-shopee-text);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cl-shopee-input:focus {
+  border-color: var(--cl-shopee-orange);
+  box-shadow: 0 0 0 2px rgba(238, 77, 45, 0.15);
+}
+
+.cl-shopee-output {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--cl-shopee-muted);
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.cl-shopee-output--positive {
+  background-color: var(--cl-shopee-teal-soft);
+  color: #117a6d;
+  font-weight: 600;
+  border: 1px solid #c2ece6;
+}
+
+.cl-shopee-output--negative {
+  background-color: var(--cl-shopee-red-soft);
+  color: var(--cl-shopee-red);
+  font-weight: 600;
+  border: 1px solid #fecdd3;
+}
+
+/* ALERTA DE OPORTUNIDADE E ATACADO */
+.cl-shopee-step-alert {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background-color: #fef9c3;
+  border: 1px solid #fde047;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #854d0e;
+  line-height: 1.4;
+}
+
+.cl-shopee-wholesale {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #166534;
+  line-height: 1.4;
+}
+
+/* ==========================================================================
+   SEÇÃO DE INTELIGÊNCIA COMPLETA
+   ========================================================================== */
+.cl-shopee-intelligence-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--cl-shopee-line);
+}
+
+.cl-shopee-section-title {
+  margin: 16px 0 10px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cl-shopee-text);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cl-shopee-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.cl-shopee-stat {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  background-color: #fcfcfc;
+  border: 1px solid #eeeeee;
+  border-radius: 6px;
+}
+
+.cl-shopee-stat--full {
+  grid-column: 1 / -1;
+  background-color: #fafbfc;
+}
+
+.cl-shopee-stat__label {
+  font-size: 11px;
+  color: var(--cl-shopee-muted);
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.cl-shopee-stat__value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--cl-shopee-text);
+  line-height: 1.2;
+}
+
+.cl-shopee-muted {
+  font-size: 10px;
+  color: var(--cl-shopee-muted);
+  margin-top: 3px;
+}
+
+/* ==========================================================================
+   RAIO-X DO VENDEDOR
+   ========================================================================== */
+.cl-shopee-seller-card {
+  padding: 12px 14px;
+  background-color: #fcfcfc;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.cl-shopee-seller-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: var(--cl-shopee-text);
+}
+
+.cl-shopee-seller-id {
+  font-size: 11px;
+  color: var(--cl-shopee-muted);
+}
+
+.cl-shopee-seller-tag {
+  padding: 2px 5px;
+  background-color: var(--cl-shopee-orange);
+  color: #ffffff;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.cl-shopee-seller-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
+.cl-shopee-seller-grid div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px dotted #eeeeee;
+}
+
+.cl-shopee-seller-grid span {
+  color: var(--cl-shopee-muted);
+}
+
+.cl-shopee-seller-grid strong {
+  color: var(--cl-shopee-text);
+}
+
+/* ==========================================================================
+   QUALIDADE DO ANÚNCIO E PROVA SOCIAL
+   ========================================================================== */
+.cl-shopee-score {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background-color: #fafbfc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.cl-shopee-score__circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background-color: var(--cl-shopee-orange);
+  color: #ffffff;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.cl-shopee-score__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.cl-shopee-score__text strong {
+  font-size: 13px;
+  color: var(--cl-shopee-text);
+}
+
+.cl-shopee-checklist {
+  list-style: none;
+  margin: 0 0 14px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.cl-shopee-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  color: var(--cl-shopee-text);
+}
+
+.cl-shopee-check--ok {
+  color: #15803d;
+}
+
+.cl-shopee-check--fail {
+  color: #64748b;
+}
+
+.cl-shopee-social-proof {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.cl-shopee-proof-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cl-shopee-proof-label {
+  font-size: 10px;
+  color: var(--cl-shopee-muted);
+  text-transform: uppercase;
+}
+
+.cl-shopee-proof-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cl-shopee-text);
+}
