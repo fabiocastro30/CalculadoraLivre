@@ -1309,12 +1309,1206 @@
     }
   }
 
+  class MarketIntelligenceEngine {
+    static percentile(arr, p) {
+      if (!Array.isArray(arr) || arr.length === 0) return 0;
+      const sorted = arr.filter((v) => typeof v === "number" && Number.isFinite(v)).sort((a, b) => a - b);
+      if (!sorted.length) return 0;
+      const index = (sorted.length - 1) * p;
+      const lower = Math.floor(index);
+      const upper = Math.ceil(index);
+      const weight = index - lower;
+      return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+    }
+
+    static filterBySegment(items, segment) {
+      if (!segment || segment === "all") return items;
+      return items.filter((item) => {
+        const p = asNumber(item.data?.price);
+        if (p <= 0) return false;
+        return IQVAnalysisEngine.getTierId(p) === segment;
+      });
+    }
+
+    // 1. Radar de Demanda
+    static calculateDemand(items) {
+      const valid = items.filter((it) => it.advanced?.salesPerDay != null && Number.isFinite(it.advanced.salesPerDay) && it.advanced.salesPerDay >= 0);
+      const validCount = valid.length;
+      const totalAds = items.length;
+
+      const salesList = valid.map((it) => it.advanced.salesPerDay);
+      const revenueList = valid.map((it) => it.advanced.monthlyRevenue ?? (it.advanced.salesPerDay * 30 * it.data.price));
+
+      const totalGiro = salesList.reduce((a, b) => a + b, 0);
+      const medianGiro = IQVAnalysisEngine.median(salesList) ?? 0;
+      const totalRevenue = revenueList.reduce((a, b) => a + b, 0);
+      const medianRevenue = IQVAnalysisEngine.median(revenueList) ?? 0;
+
+      const p25 = this.percentile(salesList, 0.25);
+      const p50 = this.percentile(salesList, 0.50);
+      const p75 = this.percentile(salesList, 0.75);
+
+      const brackets = [
+        { label: "Até 2 un./dia", count: 0, min: 0, max: 2 },
+        { label: "2 a 5 un./dia", count: 0, min: 2.0001, max: 5 },
+        { label: "5 a 10 un./dia", count: 0, min: 5.0001, max: 10 },
+        { label: "10 a 20 un./dia", count: 0, min: 10.0001, max: 20 },
+        { label: "Mais de 20 un./dia", count: 0, min: 20.0001, max: Infinity }
+      ];
+      salesList.forEach((s) => {
+        const b = brackets.find((br) => s <= br.max) ?? brackets.at(-1);
+        b.count += 1;
+      });
+
+      const tiers = ["baixo", "medio", "alto"].map((tId) => {
+        const tItems = valid.filter((it) => IQVAnalysisEngine.getTierId(it.data.price) === tId);
+        const tGiroList = tItems.map((it) => it.advanced.salesPerDay);
+        const tRevList = tItems.map((it) => it.advanced.monthlyRevenue ?? (it.advanced.salesPerDay * 30 * it.data.price));
+        const tGiroSum = tGiroList.reduce((a, b) => a + b, 0);
+        return {
+          id: tId,
+          label: tId === "baixo" ? "Ticket Baixo" : tId === "medio" ? "Ticket Médio" : "Ticket Alto",
+          validCount: tItems.length,
+          medianGiro: IQVAnalysisEngine.median(tGiroList) ?? 0,
+          medianRevenue: IQVAnalysisEngine.median(tRevList) ?? 0,
+          totalGiro: tGiroSum,
+          giroShare: totalGiro > 0 ? (tGiroSum / totalGiro * 100) : 0
+        };
+      });
+
+      const avgGiro = validCount > 0 ? (totalGiro / validCount) : 0;
+      const skew = avgGiro > medianGiro * 1.5 ? "forte influência de anúncios excepcionais puxando a média para cima" : "distribuição comercial relativamente equilibrada";
+      const leadTier = tiers.reduce((prev, curr) => curr.giroShare > prev.giroShare ? curr : prev, tiers[0]);
+      const insight = validCount > 0
+        ? `A amostra analisada apresenta giro diário mediano de <strong>${number.format(medianGiro)} un./dia</strong> e faturamento mensal mediano de <strong>${money.format(medianRevenue)}</strong> por anúncio. O <strong>${leadTier.label}</strong> concentra <strong>${leadTier.giroShare.toFixed(1)}%</strong> do volume de giro agregado. A diferença entre média (${number.format(avgGiro)} un./dia) e mediana (${number.format(medianGiro)} un./dia) indica ${skew}.`
+        : "Dados comerciais insuficientes na amostra atual para construir o radar de demanda.";
+
+      return {
+        validCount,
+        totalAds,
+        coveragePercent: totalAds > 0 ? Math.round(validCount / totalAds * 100) : 0,
+        totalGiro,
+        medianGiro,
+        totalRevenue,
+        medianRevenue,
+        p25,
+        p50,
+        p75,
+        brackets,
+        tiers,
+        insight
+      };
+    }
+
+    // 2. Faixas de Preço Mais Eficientes
+    static calculatePriceEfficiency(items, calculationFn, mode = "10") {
+      const valid = items.filter((it) => asNumber(it.data?.price) > 0);
+      if (!valid.length) return { bins: [], best: null, highestGiro: null, highestRevenue: null, highestReturn: null, insight: "Sem dados suficientes." };
+
+      const prices = valid.map((it) => it.data.price);
+      const minP = Math.min(...prices);
+      const maxP = Math.max(...prices);
+
+      let step = 10;
+      if (mode === "20") step = 20;
+      else if (mode === "auto") {
+        const range = maxP - minP;
+        if (range <= 50) step = 10;
+        else if (range <= 150) step = 25;
+        else if (range <= 300) step = 50;
+        else step = 100;
+      }
+
+      const start = Math.floor(minP / step) * step;
+      const end = Math.ceil(maxP / step) * step;
+      const bins = [];
+
+      for (let s = start; s < end; s += step) {
+        const binMin = s;
+        const binMax = s + step - 0.01;
+        const inBin = valid.filter((it) => it.data.price >= binMin && it.data.price <= binMax);
+        if (!inBin.length) continue;
+
+        const withSales = inBin.filter((it) => it.advanced?.salesPerDay != null && Number.isFinite(it.advanced.salesPerDay) && it.advanced.salesPerDay >= 0);
+        const giroList = withSales.map((it) => it.advanced.salesPerDay);
+        const revList = withSales.map((it) => it.advanced.monthlyRevenue ?? (it.advanced.salesPerDay * 30 * it.data.price));
+
+        const returnRatios = inBin.map((it) => {
+          const calc = calculationFn(it.data);
+          return it.data.price > 0 ? (calc.netPayout / it.data.price) : 0;
+        });
+        const payouts = inBin.map((it) => calculationFn(it.data).netPayout);
+
+        const medianGiro = IQVAnalysisEngine.median(giroList) ?? 0;
+        const totalGiro = giroList.reduce((a, b) => a + b, 0);
+        const medianRevenue = IQVAnalysisEngine.median(revList) ?? 0;
+        const totalRevenue = revList.reduce((a, b) => a + b, 0);
+        const medianReturnRatio = IQVAnalysisEngine.median(returnRatios) ?? 0;
+        const medianPayout = IQVAnalysisEngine.median(payouts) ?? 0;
+
+        const sg = IQVAnalysisEngine.scoreGiro(medianGiro);
+        const sf = IQVAnalysisEngine.scoreReceita(medianRevenue);
+        const sr = IQVAnalysisEngine.scoreRetorno(medianReturnRatio);
+        const efficiencyScore = IQVAnalysisEngine.scoreTier(sg, sf, sr);
+
+        bins.push({
+          label: `R$ ${binMin.toFixed(0)} a R$ ${(s + step - 0.01).toFixed(2).replace('.', ',')}`,
+          min: binMin,
+          max: binMax,
+          count: inBin.length,
+          validCount: withSales.length,
+          medianGiro,
+          totalGiro,
+          medianRevenue,
+          totalRevenue,
+          medianReturnRatio,
+          medianPayout,
+          sg,
+          sf,
+          sr,
+          efficiencyScore
+        });
+      }
+
+      const qualified = bins.filter((b) => b.validCount >= 1);
+      const robust = bins.filter((b) => b.validCount >= 2);
+      const targetPool = robust.length ? robust : (qualified.length ? qualified : bins);
+
+      const best = [...targetPool].sort((a, b) => b.efficiencyScore - a.efficiencyScore)[0] ?? null;
+      const highestGiro = [...targetPool].sort((a, b) => b.medianGiro - a.medianGiro)[0] ?? null;
+      const highestRevenue = [...targetPool].sort((a, b) => b.medianRevenue - a.medianRevenue)[0] ?? null;
+      const highestReturn = [...targetPool].sort((a, b) => b.medianReturnRatio - a.medianReturnRatio)[0] ?? null;
+
+      const insight = best
+        ? `Entre as faixas analisadas com amostra consistente, a faixa de <strong>${best.label}</strong> apresenta a maior eficiência comercial (nota <strong>${best.efficiencyScore.toFixed(1)}/100</strong>), equilibrando giro diário (${number.format(best.medianGiro)} un/dia), faturamento mensal (${money.format(best.medianRevenue)}) e repasse líquido de ${(best.medianReturnRatio * 100).toFixed(1)}%.`
+        : "Dados insuficientes para determinar faixas de preço eficientes.";
+
+      return { bins, best, highestGiro, highestRevenue, highestReturn, insight };
+    }
+
+    // 3. Concentração de Concorrentes
+    static calculateCompetition(items) {
+      const valid = items.filter((it) => it.advanced?.monthlyRevenue != null && Number.isFinite(it.advanced.monthlyRevenue) && it.advanced.monthlyRevenue > 0);
+      const totalRevenue = valid.reduce((a, it) => a + (it.advanced.monthlyRevenue ?? 0), 0);
+      const validCount = valid.length;
+
+      if (!validCount || totalRevenue <= 0) {
+        return {
+          validCount: 0,
+          totalRevenue: 0,
+          c5: 0,
+          c10: 0,
+          hhi: 0,
+          hhiClassification: "Dados insuficientes",
+          top5: [],
+          insight: "Dados de faturamento insuficientes para análise de concentração."
+        };
+      }
+
+      const sorted = [...valid].sort((a, b) => (b.advanced.monthlyRevenue ?? 0) - (a.advanced.monthlyRevenue ?? 0));
+      const top5Items = sorted.slice(0, 5);
+      const top10Items = sorted.slice(0, 10);
+
+      const top5Revenue = top5Items.reduce((a, it) => a + it.advanced.monthlyRevenue, 0);
+      const top10Revenue = top10Items.reduce((a, it) => a + it.advanced.monthlyRevenue, 0);
+
+      const c5 = (top5Revenue / totalRevenue) * 100;
+      const c10 = validCount >= 10 ? (top10Revenue / totalRevenue) * 100 : null;
+
+      const hhi = sorted.reduce((acc, it) => {
+        const share = ((it.advanced.monthlyRevenue ?? 0) / totalRevenue) * 100;
+        return acc + (share * share);
+      }, 0);
+
+      let hhiClassification = "Demanda distribuída";
+      let hhiDesc = "baixa concentração entre os anúncios observados, permitindo espaço para novos concorrentes.";
+      if (hhi >= 2500 || c5 >= 75) {
+        hhiClassification = "Demanda concentrada nos líderes";
+        hhiDesc = "elevada concentração nos líderes da busca, sugerindo um mercado dominado por poucos anúncios de alto volume.";
+      } else if (hhi >= 1500 || c5 >= 50) {
+        hhiClassification = "Concentração intermediária";
+        hhiDesc = "concentração intermediária, com liderança relevante porém sem monopólio de vendas.";
+      }
+
+      const top5 = top5Items.map((it, idx) => {
+        const rev = it.advanced.monthlyRevenue ?? 0;
+        const share = (rev / totalRevenue) * 100;
+        return {
+          rank: idx + 1,
+          title: it.data.title || "Anúncio do Mercado Livre",
+          price: it.data.price,
+          permalink: it.data.permalink,
+          salesPerDay: it.advanced.salesPerDay ?? 0,
+          monthlyRevenue: rev,
+          share,
+          isSponsored: Boolean(it.data.isSponsored),
+          logisticType: it.data.logisticType,
+          listingTypeId: it.data.listingTypeId
+        };
+      });
+
+      const insight = `Os cinco maiores anúncios representam <strong>${c5.toFixed(1)}%</strong> do faturamento estimado da amostra (Índice HHI de ${Math.round(hhi)} pontos). Isso indica ${hhiDesc}`;
+
+      return {
+        validCount,
+        totalRevenue,
+        c5,
+        c10,
+        hhi: Math.round(hhi),
+        hhiClassification,
+        top5,
+        insight
+      };
+    }
+
+    // 4. Novos Entrantes — Sinais de Alto Giro
+    static calculateNewEntrants(items, ticketMedians) {
+      const candidates = items.filter((it) => {
+        const days = it.advanced?.estimatedDaysActive;
+        const salesPerDay = it.advanced?.salesPerDay;
+        return days != null && Number.isFinite(days) && days > 0 && days <= 90 && salesPerDay != null && Number.isFinite(salesPerDay) && salesPerDay > 0;
+      });
+
+      const count = candidates.length;
+      if (!count) {
+        return {
+          count: 0,
+          aboveMedianCount: 0,
+          topEntrants: [],
+          insight: "Nenhum anúncio recente (com até 90 dias de atividade identificada) com vendas detectado na amostra atual."
+        };
+      }
+
+      const evaluated = candidates.map((it) => {
+        const tierId = IQVAnalysisEngine.getTierId(it.data.price);
+        const tMedian = ticketMedians[tierId] || 1;
+        const mult = it.advanced.salesPerDay / tMedian;
+        const isEstimated = Boolean(it.advanced.creationDateIsEstimated);
+
+        let status = "Giro em linha com a mediana";
+        let isUnconfirmed = false;
+        if (mult > 2.0) status = "Giro muito acima da mediana";
+        else if (mult >= 1.5) status = "Giro acima da mediana";
+        else if (mult < 0.8) status = "Giro abaixo da mediana";
+
+        if (isEstimated && mult > 4.0 && (it.advanced.soldQuantity >= 500)) {
+          isUnconfirmed = true;
+          status = "Sinal não confirmado (velocidade extrema com data aproximada)";
+        }
+
+        return {
+          title: it.data.title || "Anúncio recente",
+          permalink: it.data.permalink,
+          price: it.data.price,
+          daysActive: it.advanced.estimatedDaysActive,
+          creationDate: it.advanced.creationDate,
+          isEstimatedDate: isEstimated,
+          salesPerDay: it.advanced.salesPerDay,
+          monthlyRevenue: it.advanced.monthlyRevenue,
+          tierId,
+          multiplier: mult,
+          status,
+          isUnconfirmed
+        };
+      });
+
+      evaluated.sort((a, b) => b.multiplier - a.multiplier);
+      const topEntrants = evaluated.slice(0, 5);
+      const aboveMedianCount = evaluated.filter((e) => e.multiplier >= 1.2).length;
+
+      const insight = `Foram encontrados <strong>${count} anúncios</strong> aparentemente recentes (até 90 dias). <strong>${aboveMedianCount}</strong> deles apresentam velocidade de giro superior à mediana dos respectivos tickets, indicando ${aboveMedianCount > 0 ? "movimentação de novos concorrentes ganhando tração rápida" : "entrada tímida de novos anúncios sem tração extraordinária"}.`;
+
+      return {
+        count,
+        aboveMedianCount,
+        topEntrants,
+        insight
+      };
+    }
+
+    // 5. Simulador de Entrada no Mercado
+    static calculateSimulator(input, pricingEngine) {
+      const price = Math.max(0.01, asNumber(input.price, 99.90));
+      const productCost = input.productCost !== "" && input.productCost != null ? Math.max(0, asNumber(input.productCost, 0)) : null;
+      const taxPercent = clamp(asNumber(input.taxPercent, 6), 0, 100);
+      const packagingCost = Math.max(0, asNumber(input.packagingCost, 1.50));
+      const adsPercent = clamp(asNumber(input.adsPercent, 0), 0, 100);
+      const weightGrams = Math.max(1, asNumber(input.weightGrams, 1000));
+      const listingTypeId = input.listingTypeId === "gold_pro" ? "gold_pro" : "gold_special";
+      const logisticType = input.logisticType || "fulfillment";
+      const dailySales = Math.max(0, asNumber(input.dailySales, 4));
+      const targetMargin = clamp(asNumber(input.targetMargin, 15), 0, 100);
+      const monthlyGoal = Math.max(0, asNumber(input.monthlyGoal, 5000));
+
+      const commissionPercent = listingTypeId === "gold_pro" ? 17 : 12;
+      const calc = pricingEngine.calculate({
+        price,
+        commissionPercent,
+        taxPercent,
+        packagingCost,
+        weightGrams,
+        logisticType,
+        adsPercent,
+        productCost: productCost ?? 0,
+        considerSubsidy: false
+      });
+
+      const repasse = calc.netPayout;
+      const taxes = price * taxPercent / 100;
+      const adsCost = price * adsPercent / 100;
+      const knownExpenses = taxes + adsCost + packagingCost;
+
+      const unitProfit = productCost != null ? (repasse - knownExpenses - productCost) : null;
+      const marginPercent = unitProfit != null && price > 0 ? (unitProfit / price * 100) : null;
+      const monthlyRevenue = price * dailySales * 30;
+      const monthlyProfit = unitProfit != null ? (unitProfit * dailySales * 30) : null;
+      const unitsForGoal = unitProfit != null && unitProfit > 0 ? Math.ceil(monthlyGoal / unitProfit) : null;
+
+      const maxAcquisitionCost = repasse - knownExpenses - (price * targetMargin / 100);
+
+      let minViablePrice = null;
+      if (productCost != null) {
+        for (let p = 10; p <= 5000; p += 0.50) {
+          const testCalc = pricingEngine.calculate({
+            price: p,
+            commissionPercent,
+            taxPercent,
+            packagingCost,
+            weightGrams,
+            logisticType,
+            adsPercent,
+            productCost,
+            considerSubsidy: false
+          });
+          const testProfit = testCalc.netPayout - (p * taxPercent / 100 + p * adsPercent / 100 + packagingCost + productCost);
+          const testMargin = (testProfit / p) * 100;
+          if (testMargin >= targetMargin) {
+            minViablePrice = p;
+            break;
+          }
+        }
+      }
+
+      return {
+        price,
+        productCost,
+        repasse,
+        commission: calc.commission,
+        shippingFee: calc.shippingFee,
+        knownExpenses,
+        unitProfit,
+        marginPercent,
+        monthlyRevenue,
+        monthlyProfit,
+        unitsForGoal,
+        maxAcquisitionCost,
+        minViablePrice,
+        dailySales,
+        targetMargin,
+        monthlyGoal
+      };
+    }
+  }
+
+  class MarketIntelligenceModal {
+    static instance = null;
+
+    constructor() {
+      this.root = null;
+      this.cards = null;
+      this.settings = null;
+      this.iqvAnalysis = null;
+      this.activeTab = "demand";
+      this.selectedSegment = "all";
+      this.priceGrouping = "10";
+      this.priceMetric = "efficiency";
+      this.simForm = {
+        price: "",
+        productCost: "",
+        listingTypeId: "gold_special",
+        logisticType: "fulfillment",
+        weightGrams: 1000,
+        taxPercent: "",
+        packagingCost: "",
+        adsPercent: "0",
+        dailySales: "",
+        targetMargin: "15",
+        monthlyGoal: "5000"
+      };
+      this.boundKeyHandler = (e) => {
+        if (e.key === "Escape") this.close();
+      };
+    }
+
+    static getInstance() {
+      if (!this.instance) this.instance = new MarketIntelligenceModal();
+      return this.instance;
+    }
+
+    static isOpen() {
+      return Boolean(this.getInstance().root?.isConnected);
+    }
+
+    static open(cards, settings, iqvAnalysis) {
+      const modal = this.getInstance();
+      modal.cards = cards;
+      modal.settings = settings;
+      modal.iqvAnalysis = iqvAnalysis;
+
+      if (!modal.simForm.price && iqvAnalysis?.generalScore != null) {
+        const prices = cards.values().map((it) => it.data?.price).filter(Boolean);
+        const medP = IQVAnalysisEngine.median(prices);
+        if (medP) modal.simForm.price = medP.toFixed(2);
+      }
+      if (!modal.simForm.taxPercent && settings.taxPercent != null) modal.simForm.taxPercent = String(settings.taxPercent);
+      if (!modal.simForm.packagingCost && settings.packagingCost != null) modal.simForm.packagingCost = String(settings.packagingCost);
+      if (!modal.simForm.dailySales) {
+        const medGiro = iqvAnalysis ? IQVAnalysisEngine.median(cards.values().map((it) => it.advanced?.salesPerDay).filter(Boolean)) : 4;
+        modal.simForm.dailySales = medGiro ? Math.max(1, Math.round(medGiro)) : 4;
+      }
+
+      modal.mount();
+      modal.render();
+    }
+
+    static update(cards, settings, iqvAnalysis) {
+      const modal = this.getInstance();
+      if (!modal.root?.isConnected) return;
+      modal.cards = cards;
+      modal.settings = settings;
+      modal.iqvAnalysis = iqvAnalysis;
+      modal.render();
+    }
+
+    static close() {
+      this.getInstance().close();
+    }
+
+    close() {
+      if (this.root) {
+        this.root.remove();
+        this.root = null;
+        document.removeEventListener("keydown", this.boundKeyHandler);
+      }
+    }
+
+    mount() {
+      if (this.root?.isConnected) return;
+      this.root = document.createElement("div");
+      this.root.id = "calculadora-livre-intel-modal";
+      this.root.className = "cl-root cl-intel-backdrop";
+      document.body.appendChild(this.root);
+      document.addEventListener("keydown", this.boundKeyHandler);
+    }
+
+    render() {
+      if (!this.root) return;
+      const allItems = this.cards.values();
+      const items = MarketIntelligenceEngine.filterBySegment(allItems, this.selectedSegment);
+
+      const iqv = this.iqvAnalysis || IQVAnalysisEngine.analyze(allItems, (d) => this.cards.calculation(d));
+      const hasGeneral = iqv.generalScore != null && Number.isFinite(iqv.generalScore);
+      const scoreFormatted = hasGeneral ? number.format(iqv.generalScore) : "—";
+      const tierColor = iqv.generalClassification?.color || "#737373";
+      const tierLabel = iqv.generalClassification?.label || "Aguardando dados";
+
+      const tabContentHtml = this.renderActiveTab(items, allItems);
+
+      this.root.innerHTML = `
+        <div class="cl-intel-modal" role="dialog" aria-modal="true" aria-labelledby="cl-intel-title">
+          <header class="cl-intel-modal__header">
+            <div class="cl-intel-modal__title-group">
+              <h2 id="cl-intel-title" class="cl-intel-modal__title">
+                <span>CalcuLivre Intelligence</span>
+                <span class="cl-intel-badge-pro">Fase 1 Pro</span>
+              </h2>
+              <span class="cl-intel-modal__subtitle">Análise avançada de atratividade comercial e viabilidade</span>
+            </div>
+
+            <div class="cl-intel-modal__actions">
+              <label style="font-size: 11px; font-weight: 700; color: #555; display: flex; align-items: center; gap: 6px;">
+                Segmento:
+                <select class="cl-intel-segment-select" data-intel-segment>
+                  <option value="all" ${this.selectedSegment === "all" ? "selected" : ""}>Todos os tickets (${allItems.length} anúncios)</option>
+                  <option value="baixo" ${this.selectedSegment === "baixo" ? "selected" : ""}>Ticket Baixo (até R$ 50,00)</option>
+                  <option value="medio" ${this.selectedSegment === "medio" ? "selected" : ""}>Ticket Médio (R$ 50,01 a R$ 99,99)</option>
+                  <option value="alto" ${this.selectedSegment === "alto" ? "selected" : ""}>Ticket Alto (a partir de R$ 100,00)</option>
+                </select>
+              </label>
+
+              <button type="button" class="cl-intel-modal__close-btn" data-intel-close title="Fechar (Esc)">✕</button>
+            </div>
+          </header>
+
+          <div class="cl-intel-summary-strip">
+            <div class="cl-intel-summary-strip__left">
+              <div class="cl-intel-iqv-pill" style="background: ${iqv.generalClassification?.class ? 'rgba(0,0,0,0.06)' : '#eee'};">
+                <span style="display:inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${tierColor};"></span>
+                <strong>IQV Geral: ${scoreFormatted} / 100</strong>
+                <span style="color: ${tierColor}; font-weight: 700;">(${tierLabel})</span>
+              </div>
+              <span style="color: #64748b;">Amostra: <strong>${iqv.totalEvaluated}</strong> de <strong>${iqv.totalAds}</strong> anúncios com dados consolidados</span>
+            </div>
+            <div>
+              <span class="cl-iqv-rel-badge cl-iqv-rel--${iqv.reliability}">Confiabilidade ${iqv.reliabilityLabel}</span>
+            </div>
+          </div>
+
+          <nav class="cl-intel-tabs" role="tablist">
+            <button type="button" class="cl-intel-tab ${this.activeTab === 'demand' ? 'is-active' : ''}" data-intel-tab="demand">📊 Visão de Mercado</button>
+            <button type="button" class="cl-intel-tab ${this.activeTab === 'pricing' ? 'is-active' : ''}" data-intel-tab="pricing">🏷️ Preços e Tickets</button>
+            <button type="button" class="cl-intel-tab ${this.activeTab === 'competition' ? 'is-active' : ''}" data-intel-tab="competition">🏆 Concorrência</button>
+            <button type="button" class="cl-intel-tab ${this.activeTab === 'entrants' ? 'is-active' : ''}" data-intel-tab="entrants">🚀 Novos Entrantes</button>
+            <button type="button" class="cl-intel-tab ${this.activeTab === 'simulator' ? 'is-active' : ''}" data-intel-tab="simulator">🧮 Simulador</button>
+          </nav>
+
+          <div class="cl-intel-body">
+            ${tabContentHtml}
+          </div>
+
+          <footer class="cl-intel-modal__footer">
+            <span>Fonte dos dados: processamento local de anúncios visíveis na pesquisa do Mercado Livre. Sem chamadas externas.</span>
+            <span>CalcuLivre v1.14.0 • Projeto Gratuito por <a href="https://www.linkedin.com/in/fabio-castro-943649286/?isSelfProfile=true" target="_blank" style="color: #3483fa; text-decoration: none; font-weight: 700;">Fabio Castro</a></span>
+          </footer>
+        </div>
+      `;
+
+      this.bindEvents();
+    }
+
+    renderActiveTab(items, allItems) {
+      if (this.activeTab === "demand") return this.renderDemandTab(items);
+      if (this.activeTab === "pricing") return this.renderPricingTab(items);
+      if (this.activeTab === "competition") return this.renderCompetitionTab(items);
+      if (this.activeTab === "entrants") return this.renderEntrantsTab(items, allItems);
+      if (this.activeTab === "simulator") return this.renderSimulatorTab(items);
+      return "";
+    }
+
+    // 1. Visão de Mercado
+    renderDemandTab(items) {
+      const demand = MarketIntelligenceEngine.calculateDemand(items);
+      const maxCount = Math.max(...demand.brackets.map((b) => b.count), 1);
+
+      const bracketsBarsHtml = demand.brackets.map((b) => {
+        const pct = Math.round((b.count / maxCount) * 100);
+        return `<div class="cl-intel-bar-row">
+          <div class="cl-intel-bar-meta">
+            <strong>${escapeHtml(b.label)}</strong>
+            <span><strong>${b.count}</strong> anúncios (${demand.validCount > 0 ? Math.round(b.count / demand.validCount * 100) : 0}%)</span>
+          </div>
+          <div class="cl-intel-bar-track">
+            <div class="cl-intel-bar-fill" style="width: ${pct}%; background-color: #3483fa;"></div>
+          </div>
+        </div>`;
+      }).join("");
+
+      const ticketRowsHtml = demand.tiers.map((t) => `<tr>
+        <td><strong>${escapeHtml(t.label)}</strong></td>
+        <td>${t.validCount}</td>
+        <td><strong>${number.format(t.medianGiro)}</strong> un./dia</td>
+        <td><strong>${money.format(t.medianRevenue)}</strong></td>
+        <td><span class="cl-intel-badge-pro" style="background:#eef2ff;color:#4338ca;">${t.giroShare.toFixed(1)}%</span></td>
+      </tr>`).join("");
+
+      return `
+        <div class="cl-intel-kpis">
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Giro Diário Agregado</div>
+            <div class="cl-intel-kpi__value">${number.format(demand.totalGiro)} <small style="font-size: 13px; font-weight: 600;">un./dia</small></div>
+            <div class="cl-intel-kpi__sub">Volume diário somado dos anúncios válidos</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Giro Diário Mediano</div>
+            <div class="cl-intel-kpi__value">${number.format(demand.medianGiro)} <small style="font-size: 13px; font-weight: 600;">un./dia</small></div>
+            <div class="cl-intel-kpi__sub">Ritmo típico de vendas da amostra</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Faturamento da Amostra</div>
+            <div class="cl-intel-kpi__value">${money.format(demand.totalRevenue)}</div>
+            <div class="cl-intel-kpi__sub">Faturamento mensal projetado da amostra</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Faturamento Mediano</div>
+            <div class="cl-intel-kpi__value">${money.format(demand.medianRevenue)}</div>
+            <div class="cl-intel-kpi__sub">Mediana mensal por anúncio</div>
+          </div>
+        </div>
+
+        <div class="cl-intel-insight">
+          <span style="font-size: 18px;">💡</span>
+          <div>${demand.insight}</div>
+        </div>
+
+        <div class="cl-intel-grid-2">
+          <div class="cl-intel-card">
+            <div class="cl-intel-section-title">
+              <span>Distribuição de Velocidade de Vendas</span>
+              <span style="font-size: 11px; font-weight: 500; color: #64748b;">P25: ${number.format(demand.p25)} • P50: ${number.format(demand.p50)} • P75: ${number.format(demand.p75)} un/dia</span>
+            </div>
+            <div class="cl-intel-bars">
+              ${bracketsBarsHtml}
+            </div>
+          </div>
+
+          <div class="cl-intel-card">
+            <div class="cl-intel-section-title">
+              <span>Comparativo Comercial por Faixa de Ticket</span>
+            </div>
+            <div class="cl-intel-table-wrap">
+              <table class="cl-intel-table">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th>Válidos</th>
+                    <th>Giro Mediano</th>
+                    <th>Fat. Mediano</th>
+                    <th>Share Giro</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${ticketRowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // 2. Preços e Tickets
+    renderPricingTab(items) {
+      const pricing = MarketIntelligenceEngine.calculatePriceEfficiency(items, (d) => this.cards.calculation(d), this.priceGrouping);
+
+      const maxVal = Math.max(...pricing.bins.map((b) => {
+        if (this.priceMetric === "giro") return b.medianGiro;
+        if (this.priceMetric === "revenue") return b.medianRevenue;
+        if (this.priceMetric === "return") return b.medianReturnRatio * 100;
+        return b.efficiencyScore;
+      }), 1);
+
+      const barsHtml = pricing.bins.map((b) => {
+        let val = b.efficiencyScore;
+        let formatted = `${val.toFixed(1)}/100`;
+        let color = "#3483fa";
+        if (this.priceMetric === "giro") { val = b.medianGiro; formatted = `${number.format(val)} un/d`; color = "#00a650"; }
+        else if (this.priceMetric === "revenue") { val = b.medianRevenue; formatted = money.format(val); color = "#d97706"; }
+        else if (this.priceMetric === "return") { val = b.medianReturnRatio * 100; formatted = `${val.toFixed(1)}%`; color = "#7c3aed"; }
+
+        const pct = Math.round((val / maxVal) * 100);
+        const isBest = pricing.best && pricing.best.label === b.label && this.priceMetric === "efficiency";
+        return `<div class="cl-intel-bar-row">
+          <div class="cl-intel-bar-meta">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <strong>${escapeHtml(b.label)}</strong>
+              ${isBest ? '<span class="cl-intel-badge-pro" style="background:#bbf7d0; color:#15803d;">🏆 Melhor Eficiência</span>' : ''}
+            </div>
+            <span><strong>${formatted}</strong> (${b.count} anúncios)</span>
+          </div>
+          <div class="cl-intel-bar-track">
+            <div class="cl-intel-bar-fill" style="width: ${pct}%; background-color: ${isBest ? '#00a650' : color};"></div>
+          </div>
+        </div>`;
+      }).join("");
+
+      const tableRowsHtml = pricing.bins.map((b) => `<tr>
+        <td><strong>${escapeHtml(b.label)}</strong></td>
+        <td>${b.count}</td>
+        <td><strong>${number.format(b.medianGiro)}</strong> un/d</td>
+        <td>${money.format(b.medianRevenue)}</td>
+        <td><strong>${(b.medianReturnRatio * 100).toFixed(1)}%</strong></td>
+        <td>${money.format(b.medianPayout)}</td>
+        <td><strong style="color: ${b.efficiencyScore >= 60 ? '#00a650' : '#333'};">${b.efficiencyScore.toFixed(1)}</strong></td>
+      </tr>`).join("");
+
+      return `
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-size: 11.5px; font-weight: 700; color: #475569;">Agrupamento de Faixas:</label>
+            <select class="cl-intel-segment-select" data-intel-pricing-group>
+              <option value="10" ${this.priceGrouping === '10' ? 'selected' : ''}>Faixas de R$ 10</option>
+              <option value="20" ${this.priceGrouping === '20' ? 'selected' : ''}>Faixas de R$ 20</option>
+              <option value="auto" ${this.priceGrouping === 'auto' ? 'selected' : ''}>Agrupamento Automático</option>
+            </select>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-size: 11.5px; font-weight: 700; color: #475569;">Métrica no Gráfico:</label>
+            <select class="cl-intel-segment-select" data-intel-pricing-metric>
+              <option value="efficiency" ${this.priceMetric === 'efficiency' ? 'selected' : ''}>Índice de Eficiência (0-100)</option>
+              <option value="giro" ${this.priceMetric === 'giro' ? 'selected' : ''}>Giro Diário Mediano</option>
+              <option value="revenue" ${this.priceMetric === 'revenue' ? 'selected' : ''}>Faturamento Mensal Mediano</option>
+              <option value="return" ${this.priceMetric === 'return' ? 'selected' : ''}>Repasse Percentual (%)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="cl-intel-kpis">
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">🏆 Faixa Mais Eficiente</div>
+            <div class="cl-intel-kpi__value" style="font-size: 17px; color: #00a650;">${pricing.best ? escapeHtml(pricing.best.label) : "—"}</div>
+            <div class="cl-intel-kpi__sub">Nota ${pricing.best ? pricing.best.efficiencyScore.toFixed(1) : "—"}/100</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">⚡ Maior Giro Mediano</div>
+            <div class="cl-intel-kpi__value" style="font-size: 17px;">${pricing.highestGiro ? escapeHtml(pricing.highestGiro.label) : "—"}</div>
+            <div class="cl-intel-kpi__sub">${pricing.highestGiro ? number.format(pricing.highestGiro.medianGiro) + " un./dia" : "—"}</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">💰 Maior Faturamento</div>
+            <div class="cl-intel-kpi__value" style="font-size: 17px;">${pricing.highestRevenue ? escapeHtml(pricing.highestRevenue.label) : "—"}</div>
+            <div class="cl-intel-kpi__sub">${pricing.highestRevenue ? money.format(pricing.highestRevenue.medianRevenue) : "—"}</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">🛡️ Maior Retorno %</div>
+            <div class="cl-intel-kpi__value" style="font-size: 17px;">${pricing.highestReturn ? escapeHtml(pricing.highestReturn.label) : "—"}</div>
+            <div class="cl-intel-kpi__sub">${pricing.highestReturn ? (pricing.highestReturn.medianReturnRatio * 100).toFixed(1) + "% líquido" : "—"}</div>
+          </div>
+        </div>
+
+        <div class="cl-intel-insight">
+          <span style="font-size: 18px;">💡</span>
+          <div>${pricing.insight}</div>
+        </div>
+
+        <div class="cl-intel-card">
+          <div class="cl-intel-section-title">
+            <span>Comparativo por Faixa de Preço</span>
+          </div>
+          <div class="cl-intel-bars">
+            ${barsHtml}
+          </div>
+        </div>
+
+        <div class="cl-intel-table-wrap">
+          <table class="cl-intel-table">
+            <thead>
+              <tr>
+                <th>Faixa de Preço</th>
+                <th>Anúncios</th>
+                <th>Giro Mediano</th>
+                <th>Fat. Mediano</th>
+                <th>Retorno %</th>
+                <th>Repasse Médio</th>
+                <th>Eficiência (0-100)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // 3. Concorrência
+    renderCompetitionTab(items) {
+      const comp = MarketIntelligenceEngine.calculateCompetition(items);
+
+      const top5RowsHtml = comp.top5.map((ad) => `<tr>
+        <td><strong style="color: #3483fa;">#${ad.rank}</strong></td>
+        <td style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          <a href="${escapeHtml(ad.permalink)}" target="_blank" title="${escapeHtml(ad.title)}">${escapeHtml(ad.title)}</a>
+        </td>
+        <td><strong>${money.format(ad.price)}</strong></td>
+        <td>${number.format(ad.salesPerDay)} un/d</td>
+        <td><strong>${money.format(ad.monthlyRevenue)}</strong></td>
+        <td><span class="cl-intel-badge-pro" style="background:#eef2ff; color:#312e81;">${ad.share.toFixed(1)}%</span></td>
+        <td>
+          <span class="cl-badge ${ad.listingTypeId === 'gold_pro' ? 'cl-badge--blue' : ''}">${ad.listingTypeId === 'gold_pro' ? 'Premium' : 'Clássico'}</span>
+          ${ad.logisticType === 'fulfillment' ? '<span class="cl-badge cl-badge--green">Full</span>' : ''}
+          ${ad.isSponsored ? '<span class="cl-badge cl-badge--yellow">Ads</span>' : ''}
+        </td>
+      </tr>`).join("");
+
+      return `
+        <div class="cl-intel-kpis">
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Concentração Top 5 (C5)</div>
+            <div class="cl-intel-kpi__value">${comp.c5.toFixed(1)}%</div>
+            <div class="cl-intel-kpi__sub">Fatia dos 5 maiores anúncios da amostra</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Concentração Top 10 (C10)</div>
+            <div class="cl-intel-kpi__value">${comp.c10 != null ? comp.c10.toFixed(1) + '%' : '—'}</div>
+            <div class="cl-intel-kpi__sub">${comp.c10 != null ? 'Fatia dos 10 maiores anúncios' : 'Amostra menor que 10 anúncios'}</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Índice HHI</div>
+            <div class="cl-intel-kpi__value">${comp.hhi} <small style="font-size: 13px; font-weight:600;">pts</small></div>
+            <div class="cl-intel-kpi__sub">${comp.hhiClassification}</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Faturamento Analisado</div>
+            <div class="cl-intel-kpi__value">${money.format(comp.totalRevenue)}</div>
+            <div class="cl-intel-kpi__sub">${comp.validCount} anúncios com vendas na busca</div>
+          </div>
+        </div>
+
+        <div class="cl-intel-insight">
+          <span style="font-size: 18px;">💡</span>
+          <div>${comp.insight}</div>
+        </div>
+
+        <div class="cl-intel-card">
+          <div class="cl-intel-section-title">
+            <span>Distribuição de Participação dos Líderes</span>
+            <span style="font-size: 11px; color: #64748b;">Top 5 líderes vs Demais anúncios</span>
+          </div>
+          <div style="height: 18px; width: 100%; border-radius: 999px; overflow: hidden; display: flex; background: #e2e8f0; margin-top: 8px;">
+            ${comp.top5.map((ad, idx) => {
+              const colors = ["#3483fa", "#2563eb", "#1d4ed8", "#1e40af", "#1e3a8a"];
+              return `<div style="width: ${ad.share}%; background: ${colors[idx]}; height: 100%;" title="#${ad.rank}: ${ad.share.toFixed(1)}%"></div>`;
+            }).join("")}
+            <div style="width: ${Math.max(0, 100 - comp.c5)}%; background: #cbd5e1; height: 100%;" title="Demais anúncios: ${(100 - comp.c5).toFixed(1)}%"></div>
+          </div>
+          <div style="display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 11px;">
+            ${comp.top5.map((ad, idx) => `<span style="display: flex; align-items: center; gap: 4px;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: ${['#3483fa', '#2563eb', '#1d4ed8', '#1e40af', '#1e3a8a'][idx]};"></span>
+              #${ad.rank} (${ad.share.toFixed(1)}%)
+            </span>`).join("")}
+            <span style="display: flex; align-items: center; gap: 4px;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1;"></span>
+              Demais concorrentes (${(100 - comp.c5).toFixed(1)}%)
+            </span>
+          </div>
+        </div>
+
+        <div class="cl-intel-card" style="padding: 0; overflow: hidden;">
+          <div style="padding: 14px 16px; border-bottom: 1px solid #e2e8f0;">
+            <div class="cl-intel-section-title" style="margin: 0;">Top 5 Anúncios com Maior Faturamento da Pesquisa</div>
+          </div>
+          <div class="cl-intel-table-wrap" style="border: 0; border-radius: 0;">
+            <table class="cl-intel-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Anúncio</th>
+                  <th>Preço</th>
+                  <th>Giro Diário</th>
+                  <th>Faturamento Projetado</th>
+                  <th>Share Amostra</th>
+                  <th>Configuração</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${top5RowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // 4. Novos Entrantes
+    renderEntrantsTab(items, allItems) {
+      const ticketMedians = {
+        baixo: IQVAnalysisEngine.median(allItems.filter((it) => IQVAnalysisEngine.getTierId(it.data.price) === "baixo").map((it) => it.advanced?.salesPerDay).filter(Boolean)) || 1,
+        medio: IQVAnalysisEngine.median(allItems.filter((it) => IQVAnalysisEngine.getTierId(it.data.price) === "medio").map((it) => it.advanced?.salesPerDay).filter(Boolean)) || 1,
+        alto: IQVAnalysisEngine.median(allItems.filter((it) => IQVAnalysisEngine.getTierId(it.data.price) === "alto").map((it) => it.advanced?.salesPerDay).filter(Boolean)) || 1
+      };
+
+      const entrants = MarketIntelligenceEngine.calculateNewEntrants(items, ticketMedians);
+
+      const cardsHtml = entrants.topEntrants.length
+        ? entrants.topEntrants.map((ad) => `
+          <div class="cl-intel-card" style="display: flex; flex-direction: column; justify-content: space-between; gap: 10px;">
+            <div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
+                <span class="cl-intel-badge-pro" style="background: ${ad.isUnconfirmed ? '#fee2e2; color:#991b1b;' : (ad.multiplier >= 2 ? '#bbf7d0; color:#166534;' : '#e0e7ff; color:#3730a3;')};">
+                  ${ad.isUnconfirmed ? '⚠️ ' + ad.status : '🔥 ' + ad.multiplier.toFixed(1) + 'x da mediana do ticket'}
+                </span>
+                <span style="font-size: 11px; color: #64748b;">${ad.daysActive} dias (${ad.isEstimatedDate ? 'Data aproximada' : 'Data confirmada'})</span>
+              </div>
+              <h4 style="margin: 0; font-size: 13px; font-weight: 700; line-height: 1.35;">
+                <a href="${escapeHtml(ad.permalink)}" target="_blank" style="color: #1e293b; text-decoration: none;">${escapeHtml(ad.title)}</a>
+              </h4>
+            </div>
+
+            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; border-top: 1px solid #f1f5f9; padding-top: 8px; margin-top: 4px;">
+              <div>
+                <span style="font-size: 10.5px; color: #64748b; display: block;">Preço</span>
+                <strong style="font-size: 14px; color: #0f172a;">${money.format(ad.price)}</strong>
+              </div>
+              <div>
+                <span style="font-size: 10.5px; color: #64748b; display: block;">Giro estimado</span>
+                <strong style="font-size: 14px; color: #059669;">${number.format(ad.salesPerDay)} un./dia</strong>
+              </div>
+              <div>
+                <span style="font-size: 10.5px; color: #64748b; display: block;">Faturamento projetado</span>
+                <strong style="font-size: 14px; color: #1e293b;">${money.format(ad.monthlyRevenue)}</strong>
+              </div>
+            </div>
+          </div>
+        `).join("")
+        : `<div class="cl-intel-card" style="grid-column: 1 / -1; text-align: center; color: #64748b; padding: 24px;">
+            Nenhum anúncio com até 90 dias e vendas registradas foi encontrado nesta seleção.
+          </div>`;
+
+      return `
+        <div class="cl-intel-kpis">
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Anúncios Recentes</div>
+            <div class="cl-intel-kpi__value">${entrants.count}</div>
+            <div class="cl-intel-kpi__sub">Com idade $\\le$ 90 dias na amostra</div>
+          </div>
+          <div class="cl-intel-kpi">
+            <div class="cl-intel-kpi__label">Velocidade Acima da Mediana</div>
+            <div class="cl-intel-kpi__value" style="color: #059669;">${entrants.aboveMedianCount}</div>
+            <div class="cl-intel-kpi__sub">Giro superior à média do seu segmento</div>
+          </div>
+        </div>
+
+        <div class="cl-intel-insight">
+          <span style="font-size: 18px;">💡</span>
+          <div>${entrants.insight}</div>
+        </div>
+
+        <div class="cl-intel-section-title">
+          <span>Novos Entrantes com Sinais de Alto Giro (Top Anúncios Recentes)</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px;">
+          ${cardsHtml}
+        </div>
+      `;
+    }
+
+    // 5. Simulador
+    renderSimulatorTab(items) {
+      const sim = MarketIntelligenceEngine.calculateSimulator(this.simForm, MeliPricingEngine2026);
+
+      const p25 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.25) || 2;
+      const p50 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.50) || 4;
+      const p75 = MarketIntelligenceEngine.percentile(items.map((it) => it.advanced?.salesPerDay).filter(Boolean), 0.75) || 8;
+
+      const scenConservador = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p25 }, MeliPricingEngine2026);
+      const scenReferencia = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p50 }, MeliPricingEngine2026);
+      const scenExpansivo = MarketIntelligenceEngine.calculateSimulator({ ...this.simForm, dailySales: p75 }, MeliPricingEngine2026);
+
+      const hasCost = sim.productCost != null;
+
+      return `
+        <div class="cl-intel-sim-grid">
+          <!-- Coluna 1: Formulário de Configuração Operacional -->
+          <div class="cl-intel-card">
+            <div class="cl-intel-section-title">
+              <span>Parâmetros da Sua Operação</span>
+              <span style="font-size: 11px; color: #64748b;">Ajuste em tempo real</span>
+            </div>
+
+            <form class="cl-intel-form-grid" data-sim-form>
+              <div class="cl-intel-field">
+                <label>Preço Pretendido de Venda (R$)</label>
+                <input type="number" step="0.01" min="0.01" data-sim="price" value="${escapeHtml(this.simForm.price)}" required placeholder="Ex: 99.90">
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Seu Custo do Produto (R$)</label>
+                <input type="number" step="0.01" min="0" data-sim="productCost" value="${escapeHtml(this.simForm.productCost)}" placeholder="Deixe em branco p/ calcular custo máx.">
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Tipo de Anúncio</label>
+                <select data-sim="listingTypeId">
+                  <option value="gold_special" ${this.simForm.listingTypeId === 'gold_special' ? 'selected' : ''}>Clássico (${this.settings.classicCommission}%)</option>
+                  <option value="gold_pro" ${this.simForm.listingTypeId === 'gold_pro' ? 'selected' : ''}>Premium (${this.settings.premiumCommission}%)</option>
+                </select>
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Modalidade Logística</label>
+                <select data-sim="logisticType">
+                  <option value="fulfillment" ${this.simForm.logisticType === 'fulfillment' ? 'selected' : ''}>Mercado Envios Full</option>
+                  <option value="cross_docking" ${this.simForm.logisticType === 'cross_docking' ? 'selected' : ''}>Mercado Envios Normal</option>
+                </select>
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Peso Estimado (g)</label>
+                <input type="number" step="50" min="1" data-sim="weightGrams" value="${escapeHtml(this.simForm.weightGrams)}">
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Alíquota de Impostos (%)</label>
+                <input type="number" step="0.1" min="0" max="100" data-sim="taxPercent" value="${escapeHtml(this.simForm.taxPercent)}">
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Custo de Embalagem (R$)</label>
+                <input type="number" step="0.1" min="0" data-sim="packagingCost" value="${escapeHtml(this.simForm.packagingCost)}">
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Publicidade / Ads Estimado (%)</label>
+                <input type="number" step="0.5" min="0" max="100" data-sim="adsPercent" value="${escapeHtml(this.simForm.adsPercent)}">
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Vendas Diárias Projetadas (un/dia)</label>
+                <input type="number" step="1" min="0" data-sim="dailySales" value="${escapeHtml(this.simForm.dailySales)}">
+              </div>
+
+              <div class="cl-intel-field">
+                <label>Margem Operacional Desejada (%)</label>
+                <input type="number" step="0.5" min="0" max="100" data-sim="targetMargin" value="${escapeHtml(this.simForm.targetMargin)}">
+              </div>
+
+              <div class="cl-intel-field" style="grid-column: 1 / -1;">
+                <label>Meta Mensal de Lucro Limpo (R$)</label>
+                <input type="number" step="100" min="0" data-sim="monthlyGoal" value="${escapeHtml(this.simForm.monthlyGoal)}">
+              </div>
+            </form>
+          </div>
+
+          <!-- Coluna 2: Resultados Financeiros Operacionais -->
+          <div class="cl-intel-sim-results">
+            <div class="cl-intel-sim-callout">
+              <div style="display: flex; align-items: baseline; justify-content: space-between;">
+                <strong>Você Recebe do Mercado Livre</strong>
+                <span style="font-size: 11px; color: #166534;">(Após comissão de ${money.format(sim.commission)} e frete de ${money.format(sim.shippingFee)})</span>
+              </div>
+              <div class="cl-val">${money.format(sim.repasse)} <small style="font-size: 13px; font-weight: 600; color: #15803d;">/ venda</small></div>
+            </div>
+
+            <div class="cl-intel-kpis" style="grid-template-columns: 1fr 1fr;">
+              <div class="cl-intel-kpi">
+                <div class="cl-intel-kpi__label">Sobra Operacional Líquida</div>
+                <div class="cl-intel-kpi__value" style="color: ${hasCost && sim.unitProfit >= 0 ? '#059669' : (hasCost ? '#dc2626' : '#64748b')};">
+                  ${hasCost ? money.format(sim.unitProfit) : 'Informe seu custo'}
+                </div>
+                <div class="cl-intel-kpi__sub">${hasCost ? `Margem de <strong>${sim.marginPercent.toFixed(1)}%</strong>` : 'Livre de impostos e despesas'}</div>
+              </div>
+
+              <div class="cl-intel-kpi">
+                <div class="cl-intel-kpi__label">Lucro Mensal Simulado</div>
+                <div class="cl-intel-kpi__value" style="color: ${hasCost && sim.monthlyProfit >= 0 ? '#059669' : (hasCost ? '#dc2626' : '#64748b')};">
+                  ${hasCost ? money.format(sim.monthlyProfit) : '—'}
+                </div>
+                <div class="cl-intel-kpi__sub">${hasCost ? `Faturamento de ${money.format(sim.monthlyRevenue)}` : 'Preencha seu custo para projetar'}</div>
+              </div>
+            </div>
+
+            <div class="cl-intel-card">
+              <div class="cl-intel-section-title">
+                <span>Inteligência de Viabilidade & Decisão</span>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12.5px;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
+                  <span>💡 <strong>Quanto posso pagar no produto?</strong></span>
+                  <strong style="color: ${sim.maxAcquisitionCost >= 0 ? '#059669' : '#dc2626'};">
+                    ${sim.maxAcquisitionCost >= 0 ? 'Até ' + money.format(sim.maxAcquisitionCost) : 'Margem inatingível neste preço'}
+                  </strong>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
+                  <span>🎯 <strong>Preço mínimo de venda viável:</strong></span>
+                  <strong style="color: #1e293b;">
+                    ${sim.minViablePrice ? money.format(sim.minViablePrice) : (hasCost ? 'Acima do teto de simulação' : 'Informe seu custo')}
+                  </strong>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+                  <span>📦 <strong>Vendas para meta de ${money.format(sim.monthlyGoal)}:</strong></span>
+                  <strong>
+                    ${sim.unitsForGoal ? number.format(sim.unitsForGoal) + ' vendas/mês (' + (sim.unitsForGoal / 30).toFixed(1) + '/dia)' : '—'}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cenários de Venda -->
+            <div class="cl-intel-card">
+              <div class="cl-intel-section-title">
+                <span>Cenários de Vendas Baseados na Busca</span>
+              </div>
+
+              <div class="cl-intel-scenarios-grid">
+                <div class="cl-intel-scenario-card">
+                  <span>Conservador (P25)</span>
+                  <strong>${number.format(p25)} un./dia</strong>
+                  <small>${hasCost ? money.format(scenConservador.monthlyProfit) + '/mês' : money.format(scenConservador.monthlyRevenue)}</small>
+                </div>
+
+                <div class="cl-intel-scenario-card is-ref">
+                  <span>Referência (P50)</span>
+                  <strong>${number.format(p50)} un./dia</strong>
+                  <small>${hasCost ? money.format(scenReferencia.monthlyProfit) + '/mês' : money.format(scenReferencia.monthlyRevenue)}</small>
+                </div>
+
+                <div class="cl-intel-scenario-card">
+                  <span>Expansivo (P75)</span>
+                  <strong>${number.format(p75)} un./dia</strong>
+                  <small>${hasCost ? money.format(scenExpansivo.monthlyProfit) + '/mês' : money.format(scenExpansivo.monthlyRevenue)}</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    bindEvents() {
+      // Close button
+      this.root.querySelector("[data-intel-close]")?.addEventListener("click", () => this.close());
+
+      // Backdrop click closes modal
+      this.root.addEventListener("click", (e) => {
+        if (e.target === this.root) this.close();
+      });
+
+      // Segment selector
+      this.root.querySelector("[data-intel-segment]")?.addEventListener("change", (e) => {
+        this.selectedSegment = e.target.value;
+        this.render();
+      });
+
+      // Tab switcher
+      this.root.querySelectorAll("[data-intel-tab]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          this.activeTab = btn.dataset.intelTab;
+          this.render();
+        });
+      });
+
+      // Pricing grouping & metric
+      this.root.querySelector("[data-intel-pricing-group]")?.addEventListener("change", (e) => {
+        this.priceGrouping = e.target.value;
+        this.render();
+      });
+      this.root.querySelector("[data-intel-pricing-metric]")?.addEventListener("change", (e) => {
+        this.priceMetric = e.target.value;
+        this.render();
+      });
+
+      // Live simulator inputs
+      this.root.querySelectorAll("[data-sim]").forEach((input) => {
+        const key = input.dataset.sim;
+        input.addEventListener("input", (e) => {
+          this.simForm[key] = e.target.value;
+          this.render();
+          // Restore focus
+          const refocused = this.root.querySelector(`[data-sim="${key}"]`);
+          if (refocused) {
+            refocused.focus();
+            const len = refocused.value.length;
+            refocused.setSelectionRange?.(len, len);
+          }
+        });
+        input.addEventListener("change", (e) => {
+          this.simForm[key] = e.target.value;
+          this.render();
+        });
+      });
+    }
+  }
+
   class IQVPanelInjector {
     constructor(settings, cards) {
       this.settings = settings;
       this.cards = cards;
       this.root = null;
-      this.detailsOpen = false;
       this.debouncedUpdate = debounce(() => this.executeUpdate(), 160);
       this.lastSignature = "";
     }
@@ -1362,6 +2556,11 @@
       this.mount();
       if (!this.root?.isConnected) return;
       this.render();
+      if (MarketIntelligenceModal.isOpen()) {
+        const items = this.cards.values();
+        const analysis = IQVAnalysisEngine.analyze(items, (data) => this.cards.calculation(data));
+        MarketIntelligenceModal.update(this.cards, this.settings, analysis);
+      }
     }
 
     render() {
@@ -1369,7 +2568,7 @@
       const items = this.cards.values();
       const analysis = IQVAnalysisEngine.analyze(items, (data) => this.cards.calculation(data));
 
-      const signature = `${analysis.state}|${analysis.generalScore?.toFixed(1)}|${analysis.totalEvaluated}|${analysis.totalAds}|${this.detailsOpen}`;
+      const signature = `${analysis.state}|${analysis.generalScore?.toFixed(1)}|${analysis.totalEvaluated}|${analysis.totalAds}`;
       if (this.lastSignature === signature && this.root.children.length > 0) return;
       this.lastSignature = signature;
 
@@ -1379,7 +2578,7 @@
       const tierColor = analysis.generalClassification.color;
       const tierLabel = analysis.generalClassification.label;
 
-      const circumference = 226.19; // 2 * PI * 36
+      const circumference = 226.19;
       const dashoffset = hasGeneral ? circumference * (1 - clamp(scoreNum, 0, 100) / 100) : circumference;
 
       const tiersHtml = ["baixo", "medio", "alto"].map((tierId) => {
@@ -1402,25 +2601,6 @@
             <div class="cl-iqv-progress-fill" style="width: ${fillWidth}%; background-color: ${tColor};"></div>
           </div>
         </div>`;
-      }).join("");
-
-      const tableRowsHtml = ["baixo", "medio", "alto"].map((tierId) => {
-        const t = analysis.tiers[tierId];
-        if (!t.hasData) {
-          return `<tr>
-            <td><strong>${escapeHtml(t.label)}</strong></td>
-            <td>0 / ${t.totalCount}</td>
-            <td colspan="4" style="color: var(--cl-muted); font-style: italic;">Dados insuficientes no momento</td>
-          </tr>`;
-        }
-        return `<tr>
-          <td><strong>${escapeHtml(t.label)}</strong></td>
-          <td>${t.validCount} / ${t.totalCount}</td>
-          <td>${number.format(t.medianGiro)}/d</td>
-          <td>${money.format(t.medianRevenue)}</td>
-          <td>${(t.medianReturnRatio * 100).toFixed(1)}%</td>
-          <td>${money.format(t.medianPayout)}</td>
-        </tr>`;
       }).join("");
 
       const mainIndicatorHtml = analysis.state === "analyzing"
@@ -1480,67 +2660,23 @@
           </span>
         </div>
 
-        <button type="button" class="cl-iqv-details-btn" data-iqv-toggle>
-          <span>${this.detailsOpen ? "Ocultar detalhes" : "Ver detalhes"}</span>
-          <svg class="cl-iqv-chevron ${this.detailsOpen ? 'is-open' : ''}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        <button type="button" class="cl-iqv-details-btn" data-iqv-open-modal>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+          <span>Ver detalhes da inteligência (Painel Pro)</span>
         </button>
-
-        <div class="cl-iqv-details-pane ${this.detailsOpen ? 'is-open' : ''}">
-          <div class="cl-iqv-pilares">
-            <div class="cl-iqv-pilar-box">
-              <span>Giro Comercial</span>
-              <strong>40%</strong>
-            </div>
-            <div class="cl-iqv-pilar-box">
-              <span>Receita Bruta</span>
-              <strong>35%</strong>
-            </div>
-            <div class="cl-iqv-pilar-box">
-              <span>Retorno Líquido</span>
-              <strong>25%</strong>
-            </div>
-          </div>
-
-          <div class="cl-iqv-table-wrap">
-            <table class="cl-iqv-table">
-              <thead>
-                <tr>
-                  <th>Ticket</th>
-                  <th>Amostra</th>
-                  <th>Giro</th>
-                  <th>Receita</th>
-                  <th>Retorno</th>
-                  <th>Repasse</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${tableRowsHtml}
-              </tbody>
-            </table>
-          </div>
-
-          <div class="cl-iqv-disclaimer">
-            Baseado na mediana dos anúncios da pesquisa. Não deduz impostos individuais, custo do produto ou publicidade real do vendedor.
-          </div>
-        </div>
       `;
 
       this.bind();
     }
 
     bind() {
-      const btn = this.root.querySelector("[data-iqv-toggle]");
+      const btn = this.root.querySelector("[data-iqv-open-modal]");
       btn?.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.detailsOpen = !this.detailsOpen;
-        const pane = this.root.querySelector(".cl-iqv-details-pane");
-        const chevron = this.root.querySelector(".cl-iqv-chevron");
-        const label = btn.querySelector("span");
-        if (pane) pane.classList.toggle("is-open", this.detailsOpen);
-        if (chevron) chevron.classList.toggle("is-open", this.detailsOpen);
-        if (label) label.textContent = this.detailsOpen ? "Ocultar detalhes" : "Ver detalhes";
-        this.lastSignature = "";
+        const items = this.cards.values();
+        const analysis = IQVAnalysisEngine.analyze(items, (data) => this.cards.calculation(data));
+        MarketIntelligenceModal.open(this.cards, this.settings, analysis);
       });
     }
   }
@@ -1642,7 +2778,7 @@
         if (document.readyState === "complete") start();
         else window.addEventListener("load", start, { once: true });
       });
-      document.querySelectorAll("#calculadora-livre-searchbar, #calculadora-livre-iqv, .cl-poly").forEach((node) => node.remove());
+      document.querySelectorAll("#calculadora-livre-searchbar, #calculadora-livre-iqv, #calculadora-livre-intel-modal, .cl-poly").forEach((node) => node.remove());
       document.querySelectorAll("[data-calculadora-livre-ready]").forEach((node) => node.removeAttribute("data-calculadora-livre-ready"));
       cards = new SearchPolycardInjector(settings, registry, () => {
         topbar?.update();

@@ -968,3 +968,513 @@
   .cl-detail-list__row { border-bottom: 1px solid var(--cl-line) !important; }
   .cl-buybox-list, .cl-checklist { grid-template-columns: 1fr; }
 }
+
+/* ==========================================================================
+   CalcuLivre Intelligence — Modal e Painel de Inteligência Comercial (Fase 1)
+   ========================================================================== */
+.cl-intel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999999;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  animation: cl-intel-fade-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cl-intel-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.cl-intel-modal {
+  background: #ffffff;
+  width: 100%;
+  max-width: 1100px;
+  max-height: 92vh;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: rgba(0, 0, 0, 0.9);
+  font-family: "Proxima Nova", -apple-system, Roboto, Arial, sans-serif;
+  animation: cl-intel-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cl-intel-slide-up {
+  from { transform: translateY(18px) scale(0.985); }
+  to { transform: translateY(0) scale(1); }
+}
+
+/* Header */
+.cl-intel-modal__header {
+  padding: 16px 24px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e5e5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cl-intel-modal__title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cl-intel-modal__title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cl-intel-badge-pro {
+  background: #ffe600;
+  color: #333333;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cl-intel-modal__subtitle {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+}
+
+.cl-intel-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cl-intel-segment-select {
+  min-height: 36px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.85);
+  background: #ffffff;
+  outline: none;
+  cursor: pointer;
+}
+.cl-intel-segment-select:focus {
+  border-color: #3483fa;
+  box-shadow: 0 0 0 2px rgba(52, 131, 250, 0.2);
+}
+
+.cl-intel-modal__close-btn {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: #f3f4f6;
+  color: #4b5563;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.cl-intel-modal__close-btn:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+/* IQV Summary Strip */
+.cl-intel-summary-strip {
+  padding: 10px 24px;
+  background: #fafafa;
+  border-bottom: 1px solid #ededed;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.cl-intel-summary-strip__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cl-intel-iqv-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+/* Tabs */
+.cl-intel-tabs {
+  display: flex;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e5e5;
+  padding: 0 24px;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.cl-intel-tab {
+  padding: 13px 18px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transition: color 0.15s;
+}
+.cl-intel-tab:hover {
+  color: #1e293b;
+}
+.cl-intel-tab.is-active {
+  color: #3483fa;
+}
+.cl-intel-tab.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: #3483fa;
+  border-radius: 3px 3px 0 0;
+}
+
+/* Body */
+.cl-intel-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: #fdfdfd;
+}
+
+/* KPI Cards Grid */
+.cl-intel-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.cl-intel-kpi {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.cl-intel-kpi__label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cl-intel-kpi__value {
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.cl-intel-kpi__sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+/* Insights automatic explanation box */
+.cl-intel-insight {
+  background: #eff6ff;
+  border-left: 4px solid #3483fa;
+  border-radius: 6px;
+  padding: 12px 16px;
+  color: #1e40af;
+  font-size: 12.5px;
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.cl-intel-insight strong {
+  color: #1e3a8a;
+}
+
+/* Section titles */
+.cl-intel-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* Dual / Multi Column Grid */
+.cl-intel-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.cl-intel-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* Tables */
+.cl-intel-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.cl-intel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.cl-intel-table th {
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-bottom: 2px solid #e2e8f0;
+  color: #475569;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.cl-intel-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #1e293b;
+  white-space: nowrap;
+}
+.cl-intel-table tr:last-child td {
+  border-bottom: 0;
+}
+.cl-intel-table tr:hover td {
+  background: #f8fafc;
+}
+
+.cl-intel-table a {
+  color: #3483fa;
+  text-decoration: none;
+  font-weight: 600;
+}
+.cl-intel-table a:hover {
+  text-decoration: underline;
+}
+
+/* Bar Charts (Pure CSS) */
+.cl-intel-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cl-intel-bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cl-intel-bar-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.cl-intel-bar-meta strong {
+  color: #1e293b;
+}
+.cl-intel-bar-meta span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.cl-intel-bar-track {
+  width: 100%;
+  height: 8px;
+  background: #f1f5f9;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.cl-intel-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #3483fa;
+  transition: width 0.3s ease;
+}
+
+/* Simulator Form */
+.cl-intel-sim-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 20px;
+}
+
+.cl-intel-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cl-intel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cl-intel-field label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.cl-intel-field input,
+.cl-intel-field select {
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: #1e293b;
+  background: #ffffff;
+  outline: none;
+}
+.cl-intel-field input:focus,
+.cl-intel-field select:focus {
+  border-color: #3483fa;
+  box-shadow: 0 0 0 2px rgba(52, 131, 250, 0.15);
+}
+
+.cl-intel-sim-results {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cl-intel-sim-callout {
+  border-radius: 8px;
+  padding: 14px 16px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+}
+
+.cl-intel-sim-callout strong {
+  display: block;
+  font-size: 12px;
+  color: #166534;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cl-intel-sim-callout .cl-val {
+  font-size: 26px;
+  font-weight: 800;
+  color: #15803d;
+  margin-top: 4px;
+}
+
+.cl-intel-scenarios-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cl-intel-scenario-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px;
+  background: #fafafa;
+  text-align: center;
+}
+.cl-intel-scenario-card.is-ref {
+  border-color: #3483fa;
+  background: #f0f7ff;
+}
+
+.cl-intel-scenario-card span {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
+}
+.cl-intel-scenario-card strong {
+  display: block;
+  font-size: 14px;
+  color: #0f172a;
+  margin-top: 3px;
+}
+.cl-intel-scenario-card small {
+  display: block;
+  font-size: 10.5px;
+  color: #059669;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+/* Footer */
+.cl-intel-modal__footer {
+  padding: 12px 24px;
+  background: #fafafa;
+  border-top: 1px solid #e5e5e5;
+  color: #64748b;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .cl-intel-grid-2,
+  .cl-intel-sim-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

@@ -49,7 +49,7 @@ Este projeto foi idealizado e desenvolvido por **Fabio Castro** com o objetivo d
   - *Mais recentes primeiro*
   - *Mais antigos primeiro*
 
-### 4. 🎯 Módulo IQV — Índice de Qualidade e Viabilidade Comercial (Novo!)
+### 4. 🎯 Módulo IQV — Índice de Qualidade e Viabilidade Comercial
 Apresentado imediatamente acima dos filtros na barra lateral de buscas, o IQV consolida a atratividade comercial da palavra-chave pesquisada em quatro notas independentes de **0 a 100**:
 - **IQV Geral:** Score consolidado de todos os anúncios válidos ponderado pela quantidade de itens em cada faixa;
 - **IQV Ticket Baixo:** Anúncios com preço até R$ 50,00;
@@ -61,7 +61,13 @@ Apresentado imediatamente acima dos filtros na barra lateral de buscas, o IQV co
 2. **Receita Bruta (Peso 35%):** Mediana do faturamento mensal estimado ($SF = 100 \times \min(1, \ln(1 + F) / \ln(50001))$);
 3. **Retorno Líquido Promocional (Peso 25%):** Mediana da margem de repasse líquido sobre o preço após comissões e frete ($SR = 100 \times \text{clamp}((R - 0.50) / 0.35, 0, 1)$).
 
-Possui medidor circular elegante, barras horizontais de progresso, indicação de confiabilidade da amostra e painel expansível com micro-tabela detalhada por ticket.
+### 5. 🚀 CalcuLivre Intelligence (Fase 1 — Painel Pro Expandido)
+Ao clicar no botão **"Ver detalhes da inteligência (Painel Pro)"**, abre-se um modal completo no padrão estético nativo do Mercado Livre, composto por 5 sub-módulos integrados com filtro global por segmento de ticket:
+- **📊 Visão de Mercado (Radar de Demanda):** Giro diário agregado, faturamento mensal projetado da amostra, giro mediano, percentis $P25, P50, P75$ e distribuição de velocidade de vendas;
+- **🏷️ Preços e Tickets (Faixas Mais Eficientes):** Segmentação de preços em faixas de R$ 10, R$ 20 ou automática, ranqueando as faixas pelo Índice de Eficiência com gráficos comparativos e tabela completa;
+- **🏆 Concorrência (Concentração de Concorrentes):** Concentração dos 5 maiores anúncios ($C5$), dos 10 maiores ($C10$) e Índice Herfindahl-Hirschman ($HHI$), com tabela detalhada dos líderes de faturamento;
+- **🚀 Novos Entrantes (Sinais de Alto Giro):** Detector de anúncios com até 90 dias de atividade que já vendem acima da mediana do ticket, com distinção rigorosa de datas confirmadas vs aproximadas para evitar falsos positivos;
+- **🧮 Simulador de Entrada no Mercado:** Simulação operacional em tempo real onde o vendedor insere preço e custo para calcular repasse, sobra operacional, margem real, meta de lucro, **preço mínimo viável** (respeitando degraus de frete) e **custo máximo de aquisição** em 3 cenários de mercado (Conservador P25, Referência P50, Expansivo P75).
 
 ---
 
