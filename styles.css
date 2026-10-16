@@ -1879,8 +1879,8 @@
 }
 
 /* Suavização de Entrada para Prevenir Flickering */
-.cl-root {
-  animation: cl-fade-in 0.25s ease-out;
+.cl-intel-backdrop {
+  animation: cl-fade-in 0.2s ease-out;
 }
 
 .cl-poly {

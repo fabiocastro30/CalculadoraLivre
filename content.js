@@ -2836,74 +2836,98 @@
       const tierColor = iqv.generalClassification?.color || "#737373";
       const tierLabel = iqv.generalClassification?.label || "Aguardando dados";
 
-      const tabContentHtml = this.renderActiveTab(items, allItems);
-
-      this.root.innerHTML = `
-        <div class="cl-intel-modal" role="dialog" aria-modal="true" aria-labelledby="cl-intel-title">
-          <header class="cl-intel-modal__header">
-            <div class="cl-intel-modal__title-group">
-              <h2 id="cl-intel-title" class="cl-intel-modal__title">
-                <span>Calculadora Livre</span>
-                <span class="cl-intel-badge-pro">Inteligência</span>
-              </h2>
-              <span class="cl-intel-modal__subtitle">Análise avançada de atratividade comercial e viabilidade</span>
-            </div>
-
-            <div class="cl-intel-modal__actions">
-              <label style="font-size: 11px; font-weight: 700; color: #555; display: flex; align-items: center; gap: 6px;">
-                Segmento:
-                <select class="cl-intel-segment-select" data-intel-segment>
-                  <option value="all" ${this.selectedSegment === "all" ? "selected" : ""}>Todos os tickets (${allItems.length} anúncios)</option>
-                  <option value="baixo" ${this.selectedSegment === "baixo" ? "selected" : ""}>Ticket Baixo (até R$ 50,00)</option>
-                  <option value="medio" ${this.selectedSegment === "medio" ? "selected" : ""}>Ticket Médio (R$ 50,01 a R$ 99,99)</option>
-                  <option value="alto" ${this.selectedSegment === "alto" ? "selected" : ""}>Ticket Alto (a partir de R$ 100,00)</option>
-                </select>
-              </label>
-
-              <button type="button" class="cl-intel-export-btn" data-intel-export title="Exportar lista de anúncios em Excel (.xlsx)">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                <span>Exportar Anúncios (Excel)</span>
-              </button>
-
-              <button type="button" class="cl-intel-modal__close-btn" data-intel-close title="Fechar (Esc)">✕</button>
-            </div>
-          </header>
-
-          <div class="cl-intel-summary-strip">
-            <div class="cl-intel-summary-strip__left">
-              <div class="cl-intel-iqv-pill" style="background: ${iqv.generalClassification?.class ? 'rgba(0,0,0,0.06)' : '#eee'};">
-                <span style="display:inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${tierColor};"></span>
-                <strong>IQV Geral: ${scoreFormatted} / 100</strong>
-                <span style="color: ${tierColor}; font-weight: 700;">(${tierLabel})</span>
+      const modalEl = this.root.querySelector(".cl-intel-modal");
+      if (!modalEl) {
+        this.root.innerHTML = `
+          <div class="cl-intel-modal" role="dialog" aria-modal="true" aria-labelledby="cl-intel-title">
+            <header class="cl-intel-modal__header">
+              <div class="cl-intel-modal__title-group">
+                <h2 id="cl-intel-title" class="cl-intel-modal__title">
+                  <span>Calculadora Livre</span>
+                  <span class="cl-intel-badge-pro">Inteligência</span>
+                </h2>
+                <span class="cl-intel-modal__subtitle">Análise avançada de atratividade comercial e viabilidade</span>
               </div>
-              <span style="color: #64748b;">Amostra: <strong>${iqv.totalEvaluated}</strong> de <strong>${iqv.totalAds}</strong> anúncios com dados consolidados</span>
+
+              <div class="cl-intel-modal__actions">
+                <label style="font-size: 11px; font-weight: 700; color: #555; display: flex; align-items: center; gap: 6px;">
+                  Segmento:
+                  <select class="cl-intel-segment-select" data-intel-segment>
+                    <option value="all" ${this.selectedSegment === "all" ? "selected" : ""}>Todos os tickets (${allItems.length} anúncios)</option>
+                    <option value="baixo" ${this.selectedSegment === "baixo" ? "selected" : ""}>Ticket Baixo (até R$ 50,00)</option>
+                    <option value="medio" ${this.selectedSegment === "medio" ? "selected" : ""}>Ticket Médio (R$ 50,01 a R$ 99,99)</option>
+                    <option value="alto" ${this.selectedSegment === "alto" ? "selected" : ""}>Ticket Alto (a partir de R$ 100,00)</option>
+                  </select>
+                </label>
+
+                <button type="button" class="cl-intel-export-btn" data-intel-export title="Exportar lista de anúncios em Excel (.xlsx)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <span>Exportar Anúncios (Excel)</span>
+                </button>
+
+                <button type="button" class="cl-intel-modal__close-btn" data-intel-close title="Fechar (Esc)">✕</button>
+              </div>
+            </header>
+
+            <div class="cl-intel-summary-strip">
+              <div class="cl-intel-summary-strip__left">
+                <div class="cl-intel-iqv-pill" style="background: ${iqv.generalClassification?.class ? 'rgba(0,0,0,0.06)' : '#eee'};">
+                  <span style="display:inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${tierColor};"></span>
+                  <strong>IQV Geral: ${scoreFormatted} / 100</strong>
+                  <span style="color: ${tierColor}; font-weight: 700;">(${tierLabel})</span>
+                </div>
+                <span class="cl-intel-summary-sample" style="color: #64748b;">Amostra: <strong>${iqv.totalEvaluated}</strong> de <strong>${iqv.totalAds}</strong> anúncios com dados consolidados</span>
+              </div>
             </div>
-            <div>
-              <span class="cl-iqv-rel-badge cl-iqv-rel--${iqv.reliability}">Confiabilidade ${iqv.reliabilityLabel}</span>
+
+            <nav class="cl-intel-tabs" role="tablist">
+              <button type="button" class="cl-intel-tab ${this.activeTab === 'pricing' ? 'is-active' : ''}" data-intel-tab="pricing">🏷️ Preços e Tickets</button>
+              <button type="button" class="cl-intel-tab ${this.activeTab === 'demand' ? 'is-active' : ''}" data-intel-tab="demand">📊 Visão de Mercado</button>
+              <button type="button" class="cl-intel-tab ${this.activeTab === 'competition' ? 'is-active' : ''}" data-intel-tab="competition">🏆 Concorrência</button>
+              <button type="button" class="cl-intel-tab ${this.activeTab === 'entrants' ? 'is-active' : ''}" data-intel-tab="entrants">🚀 Novos Entrantes</button>
+              <button type="button" class="cl-intel-tab ${this.activeTab === 'simulator' ? 'is-active' : ''}" data-intel-tab="simulator">🧮 Simulador</button>
+              <button type="button" class="cl-intel-tab ${this.activeTab === 'categories' ? 'is-active' : ''}" data-intel-tab="categories">🗂️ Categorias</button>
+            </nav>
+
+            <div class="cl-intel-body">
+              ${this.renderActiveTab(items, allItems)}
             </div>
+
+            <footer class="cl-intel-modal__footer">
+              <span>Fonte dos dados: processamento local de anúncios visíveis na pesquisa do Mercado Livre. Sem chamadas externas.</span>
+              <span>Calculadora Livre v1.15.0 • Projeto Gratuito por <a href="https://www.linkedin.com/in/fabio-castro-943649286/?isSelfProfile=true" target="_blank" style="color: #3483fa; text-decoration: none; font-weight: 700;">Fabio Castro</a></span>
+            </footer>
           </div>
+        `;
+        this.bindEvents();
+      } else {
+        const pillEl = this.root.querySelector(".cl-intel-iqv-pill");
+        if (pillEl) {
+          pillEl.innerHTML = `
+            <span style="display:inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${tierColor};"></span>
+            <strong>IQV Geral: ${scoreFormatted} / 100</strong>
+            <span style="color: ${tierColor}; font-weight: 700;">(${tierLabel})</span>
+          `;
+        }
+        const sampleEl = this.root.querySelector(".cl-intel-summary-sample");
+        if (sampleEl) {
+          sampleEl.innerHTML = `Amostra: <strong>${iqv.totalEvaluated}</strong> de <strong>${iqv.totalAds}</strong> anúncios com dados consolidados`;
+        }
 
-          <nav class="cl-intel-tabs" role="tablist">
-            <button type="button" class="cl-intel-tab ${this.activeTab === 'pricing' ? 'is-active' : ''}" data-intel-tab="pricing">🏷️ Preços e Tickets</button>
-            <button type="button" class="cl-intel-tab ${this.activeTab === 'demand' ? 'is-active' : ''}" data-intel-tab="demand">📊 Visão de Mercado</button>
-            <button type="button" class="cl-intel-tab ${this.activeTab === 'competition' ? 'is-active' : ''}" data-intel-tab="competition">🏆 Concorrência</button>
-            <button type="button" class="cl-intel-tab ${this.activeTab === 'entrants' ? 'is-active' : ''}" data-intel-tab="entrants">🚀 Novos Entrantes</button>
-            <button type="button" class="cl-intel-tab ${this.activeTab === 'simulator' ? 'is-active' : ''}" data-intel-tab="simulator">🧮 Simulador</button>
-            <button type="button" class="cl-intel-tab ${this.activeTab === 'categories' ? 'is-active' : ''}" data-intel-tab="categories">🗂️ Categorias</button>
-          </nav>
+        this.root.querySelectorAll("[data-intel-tab]").forEach((btn) => {
+          btn.classList.toggle("is-active", btn.dataset.intelTab === this.activeTab);
+        });
 
-          <div class="cl-intel-body">
-            ${tabContentHtml}
-          </div>
-
-          <footer class="cl-intel-modal__footer">
-            <span>Fonte dos dados: processamento local de anúncios visíveis na pesquisa do Mercado Livre. Sem chamadas externas.</span>
-            <span>Calculadora Livre v1.15.0 • Projeto Gratuito por <a href="https://www.linkedin.com/in/fabio-castro-943649286/?isSelfProfile=true" target="_blank" style="color: #3483fa; text-decoration: none; font-weight: 700;">Fabio Castro</a></span>
-          </footer>
-        </div>
-      `;
-
-      this.bindEvents();
+        const bodyEl = this.root.querySelector(".cl-intel-body");
+        if (bodyEl) {
+          const activeEl = document.activeElement;
+          const isSimulatorTyping = this.activeTab === "simulator" && activeEl && activeEl.matches("input, select, textarea") && bodyEl.contains(activeEl);
+          if (!isSimulatorTyping) {
+            bodyEl.innerHTML = this.renderActiveTab(items, allItems);
+            this.bindTabEvents();
+          }
+        }
+      }
     }
 
     renderActiveTab(items, allItems) {
@@ -3915,7 +3939,7 @@
       `;
     }
 
-    bindEvents() {
+    bindGlobalEvents() {
       // Close button
       this.root.querySelector("[data-intel-close]")?.addEventListener("click", () => this.close());
 
@@ -3947,7 +3971,9 @@
           this.render();
         });
       });
+    }
 
+    bindTabEvents() {
       // Pricing grouping & metric
       this.root.querySelector("[data-intel-pricing-group]")?.addEventListener("change", (e) => {
         this.priceGrouping = e.target.value;
@@ -3999,6 +4025,11 @@
         });
       });
     }
+
+    bindEvents() {
+      this.bindGlobalEvents();
+      this.bindTabEvents();
+    }
   }
 
   class IQVPanelInjector {
@@ -4006,7 +4037,7 @@
       this.settings = settings;
       this.cards = cards;
       this.root = null;
-      this.debouncedUpdate = debounce(() => this.executeUpdate(), 160);
+      this.debouncedUpdate = debounce(() => this.executeUpdate(), 250);
       this.lastSignature = "";
     }
 
@@ -4038,7 +4069,6 @@
           else if (offersList) offersList.before(this.root);
         }
       }
-      if (!existing || this.root.children.length === 0) this.render();
     }
 
     update() {
@@ -4127,39 +4157,50 @@
             </div>
           </div>`;
 
-      this.root.innerHTML = `
-        <div class="cl-iqv-header">
-          <div class="cl-iqv-header__text">
-            <div class="cl-iqv-title-row">
-              <h2 class="cl-iqv-title">IQV — Qualidade e Viabilidade</h2>
-              <span class="cl-iqv-badge-tag">Índice Comercial</span>
+      const isInitial = !this.root.querySelector(".cl-iqv-header");
+      if (isInitial) {
+        this.root.innerHTML = `
+          <div class="cl-iqv-header">
+            <div class="cl-iqv-header__text">
+              <div class="cl-iqv-title-row">
+                <h2 class="cl-iqv-title">IQV — Qualidade e Viabilidade</h2>
+                <span class="cl-iqv-badge-tag">Índice Comercial</span>
+              </div>
             </div>
-            <span class="cl-iqv-subtitle">Atratividade estimada desta pesquisa</span>
           </div>
-        </div>
 
-        ${mainIndicatorHtml}
+          <div class="cl-iqv-main-host">
+            ${mainIndicatorHtml}
+          </div>
 
-        <div class="cl-iqv-tiers">
-          ${tiersHtml}
-        </div>
+          <div class="cl-iqv-tiers">
+            ${tiersHtml}
+          </div>
 
-        <div class="cl-iqv-footer">
-          <span class="cl-iqv-count-text">
-            <strong>${analysis.totalEvaluated}</strong> de <strong>${analysis.totalAds}</strong> avaliados
-          </span>
-          <span class="cl-iqv-rel-badge cl-iqv-rel--${analysis.reliability}">
-            Confiabilidade ${analysis.reliabilityLabel}
-          </span>
-        </div>
+          <div class="cl-iqv-footer">
+            <span class="cl-iqv-count-text">
+              <strong>${analysis.totalEvaluated}</strong> de <strong>${analysis.totalAds}</strong> avaliados
+            </span>
+          </div>
 
-        <button type="button" class="cl-iqv-details-btn" data-iqv-open-modal>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
-          <span>Ver detalhes da inteligência</span>
-        </button>
-      `;
+          <button type="button" class="cl-iqv-details-btn" data-iqv-open-modal>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+            <span>Ver detalhes da inteligência</span>
+          </button>
+        `;
+        this.bind();
+      } else {
+        const mainHost = this.root.querySelector(".cl-iqv-main-host");
+        if (mainHost) mainHost.innerHTML = mainIndicatorHtml;
 
-      this.bind();
+        const tiersEl = this.root.querySelector(".cl-iqv-tiers");
+        if (tiersEl) tiersEl.innerHTML = tiersHtml;
+
+        const countText = this.root.querySelector(".cl-iqv-count-text");
+        if (countText) {
+          countText.innerHTML = `<strong>${analysis.totalEvaluated}</strong> de <strong>${analysis.totalAds}</strong> avaliados`;
+        }
+      }
     }
 
     bind() {
