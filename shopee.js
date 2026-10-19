@@ -642,7 +642,7 @@
 
       // 2. Scan briefing elements for "vendido" / "vendidos"
       if (soldQuantity === 0) {
-        const searchScope = document.querySelectorAll(".xvTkTc span, .xvTkTc div, .SQguX_ span, .SQguX_ div, .product-briefing span, .product-briefing div, .zrnbj5, [class*='zrnbj5']");
+        const searchScope = document.querySelectorAll(".xvTkTc span, .xvTkTc div, .SQguX_ span, .SQguX_ div, .product-briefing span, .product-briefing div, .zrnbj5, [class*='zrnbj5'], div[class*='flex']");
         for (const el of searchScope) {
           const t = el.textContent?.trim() || "";
           if (/(?:vendido|vendidos)/i.test(t) && !t.includes("avaliar")) {
@@ -657,12 +657,12 @@
         }
       }
 
-      // 3. Regex on briefing innerHTML
+      // 3. Scan full page / briefing body text for "vendidos"
       if (soldQuantity === 0) {
-        const briefingEl = document.querySelector(".xvTkTc, .SQguX_, .product-briefing");
-        if (briefingEl) {
-          const matchSold = briefingEl.innerHTML.match(/<span[^>]*class="[^"]*PfWbfd[^"]*"[^>]*>([^<]+)<\/span>\s*Vendidos/i) ||
-                            briefingEl.innerText.match(/([\d,\.]+\s*(?:mil|k)?\+?)\s*Vendidos/i);
+        const fullScope = document.querySelector(".xvTkTc, .SQguX_, .product-briefing") || document.body;
+        if (fullScope) {
+          const matchSold = fullScope.innerHTML?.match(/<span[^>]*class="[^"]*PfWbfd[^"]*"[^>]*>([^<]+)<\/span>\s*Vendidos/i) ||
+                            fullScope.innerText?.match(/([\d,\.]+\s*(?:mil|k)?\+?)\s*Vendidos/i);
           if (matchSold) {
             const parsed = parseShopeeSoldCount(matchSold[1]);
             soldDisplay = parsed.display;
@@ -672,41 +672,53 @@
         }
       }
 
-      // Stock from DOM
+      // Stock from DOM (Estoque promocional ou estoque total disponível)
       let stock = 0;
       let hasAvailableStock = false;
-      const allTextElements = document.querySelectorAll(".xvTkTc span, .xvTkTc div, .product-briefing span, .product-briefing div, .SQguX_ span, .SQguX_ div");
-      for (const el of allTextElements) {
-        const t = el.textContent?.trim() || "";
-        const stockMatch = t.match(/(\d+)\s*(?:peças disponíveis|itens disponíveis|disponíveis)/i);
-        if (stockMatch) {
-          stock = parseInt(stockMatch[1], 10);
-          hasAvailableStock = true;
-          break;
-        }
-        if (/estoque disponível/i.test(t)) {
-          hasAvailableStock = true;
+      const bodyText = document.body ? document.body.innerText : "";
+
+      const promoStockMatch = bodyText.match(/estoque\s*promocional\s*[\r\n\s]+(\d+)/i) ||
+                              bodyText.match(/(\d+)\s*(?:peças disponíveis|itens disponíveis|unidades disponíveis)/i);
+      if (promoStockMatch) {
+        stock = parseInt(promoStockMatch[1], 10);
+        hasAvailableStock = true;
+      } else {
+        const allTextElements = document.querySelectorAll(".xvTkTc span, .xvTkTc div, .product-briefing span, .product-briefing div, .SQguX_ span, .SQguX_ div, [class*='stock']");
+        for (const el of allTextElements) {
+          const t = el.textContent?.trim() || "";
+          const stockMatch = t.match(/(\d+)\s*(?:peças disponíveis|itens disponíveis|disponíveis)/i);
+          if (stockMatch) {
+            stock = parseInt(stockMatch[1], 10);
+            hasAvailableStock = true;
+            break;
+          }
+          if (/estoque disponível/i.test(t)) {
+            hasAvailableStock = true;
+          }
         }
       }
+      if (stock > 0 || /estoque disponível/i.test(bodyText)) {
+        hasAvailableStock = true;
+      }
 
-      // Rating from DOM
+      // Rating and reviews count from DOM
       let ratingStar = 0;
       let ratingCount = 0;
-      const modernRating = document.querySelector(".FllsTu.JXtSdn.bv0Mz_, .FllsTu.bv0Mz_, .uLEz5u .FllsTu");
+      const modernRating = document.querySelector(".FllsTu.JXtSdn.bv0Mz_, .FllsTu.bv0Mz_, .uLEz5u .FllsTu, [class*='rating-star']");
       if (modernRating) {
         const parsedStar = parseFloat(modernRating.textContent?.trim() || "0");
         if (parsedStar > 0) ratingStar = parsedStar;
       }
       if (ratingStar === 0) {
-        const ratingEl = document.querySelector(".product-briefing [class*='rating'], .product-briefing [class*='stars']");
+        const ratingEl = document.querySelector(".product-briefing [class*='rating'], .product-briefing [class*='stars'], .uLEz5u");
         if (ratingEl) {
-          const starMatch = ratingEl.textContent?.match(/(\d\.\d)/);
+          const starMatch = ratingEl.textContent?.match(/\b([1-5]\.\d)\b/);
           if (starMatch) ratingStar = parseFloat(starMatch[1]);
         }
       }
 
       // Reviews count from DOM
-      const revElements = document.querySelectorAll("button.k_fvNr, .uLEz5u button, .product-briefing [class*='rating']");
+      const revElements = document.querySelectorAll("button.k_fvNr, .uLEz5u button, .product-briefing [class*='rating'], [class*='reviews']");
       for (const btn of revElements) {
         if (/avaliaç/i.test(btn.textContent || "")) {
           const numEl = btn.querySelector(".FllsTu") || btn;
@@ -718,54 +730,97 @@
         }
       }
 
+      // Fallback for rating + review count in case classes changed:
+      if (ratingStar === 0 || ratingCount === 0) {
+        const ratingBlockMatch = bodyText.match(/\b([1-5]\.\d)\s*[\r\n\s]+(\d+[\d\.,]*)\s*[\r\n\s]*Avaliações/i);
+        if (ratingBlockMatch) {
+          if (ratingStar === 0) ratingStar = parseFloat(ratingBlockMatch[1]);
+          if (ratingCount === 0) ratingCount = parseInt(ratingBlockMatch[2].replace(/\./g, ""), 10);
+        }
+      }
+
+      // Favorites / Likes count
+      let likedCount = 0;
+      const favMatch = bodyText.match(/Favoritar\s*\(([\d\.,]+(?:\s*(?:mil|k))?)\)/i) ||
+                       bodyText.match(/Favorito\s*\(([\d\.,]+(?:\s*(?:mil|k))?)\)/i);
+      if (favMatch) {
+        const pFav = parseShopeeSoldCount(favMatch[1]);
+        if (pFav.count > 0) likedCount = pFav.count;
+      }
+
       // Shop info from DOM
       let shopName = "";
       let shopLocation = "";
       let shopIsOfficial = Boolean(document.querySelector("img.ZZO5kF[alt*='mall'], img[alt*='mall'], .kG0FxG img[alt*='mall']"));
       let shopItemCount = 0;
       let shopRatingStar = 0;
+      let shopRatingTotal = "";
       let shopFollowerCount = 0;
       let shopResponseRate = 0;
       let shopResponseTime = "";
 
-      const shopCard = document.querySelector(".page-product__shop, [class*='page-product__shop'], [class*='shop-info'], [class*='shop-header']");
+      const shopCard = document.querySelector(".page-product__shop, [class*='page-product__shop'], [class*='shop-info'], [class*='shop-header'], [class*='shop-detail']");
+      const shopText = shopCard ? (shopCard.innerText || "") : bodyText;
+
+      // Shop name
       if (shopCard) {
-        shopName = shopCard.querySelector("h1, [class*='shop-name'], a[href*='/shop/'], a[href*='/from_same_shop']")?.textContent?.trim() || "";
+        shopName = shopCard.querySelector("h1, [class*='shop-name'], a[href*='/shop/'], a[href*='/from_same_shop'], a[href*='entryPoint=ShopByPDP']")?.textContent?.trim() || "";
         if (!shopIsOfficial) {
           shopIsOfficial = Boolean(shopCard.querySelector("[class*='official'], [class*='mall'], [class*='preferred']"));
         }
-        const shopText = shopCard.innerText || "";
-        const locMatch = shopText.match(/(?:enviar de|localização|de)\s*:\s*([^\n\r]+)/i);
-        if (locMatch) shopLocation = locMatch[1].trim();
-
-        // Extrair métricas do vendedor diretamente do DOM
-        const itemsMatch = shopText.match(/produtos\s*:\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) || shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*produtos/i);
-        if (itemsMatch) {
-          const p = parseShopeeSoldCount(itemsMatch[1]);
-          if (p.count > 0) shopItemCount = p.count;
+      }
+      if (!shopName) {
+        const shopLink = document.querySelector("a[href*='entryPoint=ShopByPDP'], a[href*='?categoryId='][href*='itemId=']");
+        if (shopLink) {
+          // Link normalmente está dentro do bloco da loja; pegar o texto do container irmão
+          const parent = shopLink.closest("div")?.parentElement;
+          if (parent) {
+            const firstLine = parent.innerText.split("\n")[0]?.trim();
+            if (firstLine && firstLine.length < 50 && !firstLine.includes("http")) {
+              shopName = firstLine;
+            }
+          }
         }
+      }
 
-        const ratingsMatch = shopText.match(/avaliações\s*:\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) || shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*avaliações/i);
-        if (ratingsMatch) {
-          const p = parseShopeeSoldCount(ratingsMatch[1]);
-          if (p.count > 0) shopRatingStar = p.count >= 10 ? 4.8 : p.count;
-        }
+      // Shop Location
+      const locMatch = shopText.match(/(?:enviar de|localização|de)\s*:\s*([^\n\r]+)/i);
+      if (locMatch) shopLocation = locMatch[1].trim();
 
-        const followersMatch = shopText.match(/seguidores\s*:\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) || shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*seguidores/i);
-        if (followersMatch) {
-          const p = parseShopeeSoldCount(followersMatch[1]);
-          if (p.count > 0) shopFollowerCount = p.count;
-        }
+      // Métricas do vendedor resilientes a ausência de espaços e de dois pontos ':'
+      const itemsMatch = shopText.match(/(?:produtos|itens)\s*:?\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) ||
+                         shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*(?:produtos|itens)/i);
+      if (itemsMatch) {
+        const p = parseShopeeSoldCount(itemsMatch[1]);
+        if (p.count > 0) shopItemCount = p.count;
+      }
 
-        const respRateMatch = shopText.match(/taxa de resposta\s*:\s*(\d+)%?/i) || shopText.match(/(\d+)%\s*(?:de taxa de resposta|taxa de resposta)/i);
-        if (respRateMatch) {
-          shopResponseRate = parseInt(respRateMatch[1], 10);
-        }
+      const ratingsMatch = shopText.match(/(?:avaliações da loja|avaliações|avaliação)\s*:?\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) ||
+                           shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*(?:avaliações|avaliação)/i);
+      if (ratingsMatch) {
+        shopRatingTotal = ratingsMatch[1].trim();
+        const p = parseShopeeSoldCount(ratingsMatch[1]);
+        if (p.count > 0) shopRatingStar = p.count >= 10 ? 4.8 : p.count;
+      }
 
-        const respTimeMatch = shopText.match(/tempo de resposta\s*:\s*([^\n\r]+)/i) || shopText.match(/(?:responde em|geralmente responde)\s*([^\n\r]+)/i);
-        if (respTimeMatch) {
-          shopResponseTime = respTimeMatch[1].trim();
-        }
+      const followersMatch = shopText.match(/(?:seguidores)\s*:?\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) ||
+                             shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*seguidores/i);
+      if (followersMatch) {
+        const p = parseShopeeSoldCount(followersMatch[1]);
+        if (p.count > 0) shopFollowerCount = p.count;
+      }
+
+      const respRateMatch = shopText.match(/taxa\s*de\s*resposta(?:\s*do\s*chat)?\s*:?\s*(\d+)%?/i) ||
+                            shopText.match(/(\d+)%\s*(?:de taxa de resposta|taxa de resposta)/i);
+      if (respRateMatch) {
+        shopResponseRate = parseInt(respRateMatch[1], 10);
+      }
+
+      const respTimeMatch = shopText.match(/(?:responde\s*o\s*chat\s*em|responde\s*em|geralmente\s*responde(?:\s*o\s*chat)?(?:\s*em)?|tempo\s*de\s*resposta)\s*:?\s*([^\n\r]+)/i);
+      if (respTimeMatch) {
+        let res = respTimeMatch[1].trim().replace(/^(?:o\s+chat\s+em|em)\s*/i, "");
+        res = res.replace(/seguidores.*$/i, "").trim();
+        shopResponseTime = res;
       }
 
       // Location from PDP shipping section (e.g. "Ferraz de Vasconcelos, São Paulo")
@@ -793,11 +848,13 @@
         hasAvailableStock,
         ratingStar,
         ratingCount,
+        likedCount,
         shopName,
         shopLocation,
         shopIsOfficial,
         shopItemCount,
         shopRatingStar,
+        shopRatingTotal,
         shopFollowerCount,
         shopResponseRate,
         shopResponseTime,
@@ -1053,12 +1110,20 @@
         const parsed = ShopeeDataExtractor.extractFromJson(json, ids);
         if (!parsed) return;
 
+        const current = this.data ?? {};
         this.data = {
-          ...(this.data ?? {}),
+          ...current,
           ...parsed,
-          // Preservar valores mais recentes de preço e variação se já presentes no DOM
-          price: (this.data?.price && this.data.price > 0) ? this.data.price : parsed.price,
-          originalPrice: (this.data?.originalPrice && this.data.originalPrice > 0) ? this.data.originalPrice : parsed.originalPrice
+          price: (current.price && current.price > 0) ? current.price : parsed.price,
+          originalPrice: (current.originalPrice && current.originalPrice > 0) ? current.originalPrice : parsed.originalPrice,
+          soldQuantity: (parsed.soldQuantity && parsed.soldQuantity > 0) ? parsed.soldQuantity : (current.soldQuantity || 0),
+          soldDisplay: (parsed.soldDisplay && parsed.soldDisplay !== "0") ? parsed.soldDisplay : (current.soldDisplay || ""),
+          ratingStar: (parsed.ratingStar && parsed.ratingStar > 0) ? parsed.ratingStar : (current.ratingStar || 0),
+          ratingCount: (parsed.ratingCount && parsed.ratingCount > 0) ? parsed.ratingCount : (current.ratingCount || 0),
+          likedCount: (parsed.likedCount && parsed.likedCount > 0) ? parsed.likedCount : (current.likedCount || 0),
+          stock: (parsed.stock && parsed.stock > 0) ? parsed.stock : (current.stock || 0),
+          shopName: parsed.shop?.name || current.shopName || current.shop?.name || "",
+          shopIsOfficial: parsed.shop?.isOfficial != null ? parsed.shop.isOfficial : current.shopIsOfficial
         };
 
         if (this.root && document.body.contains(this.root)) {
@@ -1087,11 +1152,30 @@
 
       const structured = ShopeeDataExtractor.fromDocument();
       const domData = ShopeeDomFallbackExtractor.fromDocument();
+      const currentData = this.data ?? {};
 
+      // Merge inteligente: o que tiver valor válido prevalece sobre 0 / nulo
       this.data = {
-        ...(this.data ?? {}),
+        ...currentData,
+        ...(structured ?? {}),
         ...(domData ?? {}),
-        ...(structured ?? {})
+        soldQuantity: (domData.soldQuantity > 0 ? domData.soldQuantity : (structured?.soldQuantity || currentData.soldQuantity || 0)),
+        soldDisplay: (domData.soldDisplay ? domData.soldDisplay : (structured?.soldDisplay || currentData.soldDisplay || "")),
+        soldIsLowerBound: domData.soldIsLowerBound || structured?.soldIsLowerBound || currentData.soldIsLowerBound || false,
+        ratingStar: (domData.ratingStar > 0 ? domData.ratingStar : (structured?.ratingStar || currentData.ratingStar || 0)),
+        ratingCount: (domData.ratingCount > 0 ? domData.ratingCount : (structured?.ratingCount || currentData.ratingCount || 0)),
+        likedCount: (domData.likedCount > 0 ? domData.likedCount : (structured?.likedCount || currentData.likedCount || 0)),
+        stock: (domData.stock > 0 ? domData.stock : (structured?.stock || currentData.stock || 0)),
+        hasAvailableStock: domData.hasAvailableStock || currentData.hasAvailableStock || false,
+        shopName: domData.shopName || structured?.shop?.name || currentData.shopName || currentData.shop?.name || "",
+        shopLocation: domData.shopLocation || structured?.shop?.location || currentData.shopLocation || currentData.shop?.location || "",
+        shopIsOfficial: domData.shopIsOfficial || structured?.shop?.isOfficial || currentData.shopIsOfficial || false,
+        shopItemCount: (domData.shopItemCount > 0 ? domData.shopItemCount : (structured?.shop?.itemCount || currentData.shopItemCount || 0)),
+        shopRatingStar: (domData.shopRatingStar > 0 ? domData.shopRatingStar : (structured?.shop?.ratingStar || currentData.shopRatingStar || 0)),
+        shopRatingTotal: domData.shopRatingTotal || currentData.shopRatingTotal || "",
+        shopFollowerCount: (domData.shopFollowerCount > 0 ? domData.shopFollowerCount : (structured?.shop?.followerCount || currentData.shopFollowerCount || 0)),
+        shopResponseRate: (domData.shopResponseRate > 0 ? domData.shopResponseRate : (structured?.shop?.responseRate || currentData.shopResponseRate || 0)),
+        shopResponseTime: domData.shopResponseTime || structured?.shop?.responseTime || currentData.shopResponseTime || ""
       };
 
       // Prefer live DOM price if detected and valid
@@ -1435,11 +1519,11 @@
             ${data.shop?.isOfficial || data.shopIsOfficial ? `<span class="cl-shopee-seller-tag">Oficial</span>` : ""}
           </div>
           <div class="cl-shopee-seller-grid">
-            <div><span>Avaliações da loja:</span> <strong>${sellerRating > 0 ? `${number.format(sellerRating)} ★` : (data.ratingStar > 0 ? `${number.format(data.ratingStar)} ★` : "—")}</strong></div>
-            <div><span>Produtos cadastrados:</span> <strong>${sellerItems > 0 ? number.format(sellerItems) : "—"}</strong></div>
+            <div><span>Avaliações da loja:</span> <strong>${data.shopRatingTotal ? escapeHtml(data.shopRatingTotal) : (sellerRating > 0 ? `${number.format(sellerRating)} ★` : (data.ratingStar > 0 ? `${number.format(data.ratingStar)} ★` : "—"))}</strong></div>
+            <div><span>Produtos cadastrados:</span> <strong>${sellerItems > 0 ? (sellerItems >= 1000 ? compact.format(sellerItems) : number.format(sellerItems)) : "—"}</strong></div>
             <div><span>Seguidores:</span> <strong>${sellerFollowers > 0 ? compact.format(sellerFollowers) : "—"}</strong></div>
             <div><span>Taxa de resposta:</span> <strong>${sellerRespRate > 0 ? `${sellerRespRate}%` : "—"}</strong></div>
-            <div><span>Tempo de resposta:</span> <strong>${escapeHtml(sellerRespTime || "em poucas horas")}</strong></div>
+            <div><span>Tempo de resposta:</span> <strong>${escapeHtml(sellerRespTime || "dentro de minutos")}</strong></div>
             <div><span>Localização:</span> <strong>${escapeHtml(sellerLocation)}</strong></div>
           </div>
         </div>
