@@ -7,9 +7,7 @@
   const APP = "Calculadora Livre (Shopee)";
 
   const DEFAULT_SHOPEE_SETTINGS = Object.freeze({
-    shopeeCommissionPercent: 20, // 20% Programa de Frete Grátis Extra (ou 14% padrão)
-    shopeeFixedFee: 4.0,         // R$ 4,00 taxa fixa por item vendido
-    shopeeMaxCommission: 105.0,  // R$ 105,00 teto máximo de comissão por item na Shopee Brasil
+    shopeeAutoTier: true,        // Tabela oficial progressiva por faixas da Shopee Brasil (Artigo 18483)
     shopeeTaxPercent: 6.0,       // Imposto padrão configurável
     shopeePackagingCost: 1.5,    // Custo de embalagem
     shopeeAdsPercent: 0.0,       // Publicidade (Shopee Ads)
@@ -176,11 +174,71 @@
   // PRICING ENGINE (EXCLUSIVO DA SHOPEE)
   // =========================================================================
   class ShopeePricingEngine {
+    static getFeeTier(price) {
+      const p = Math.max(0, asNumber(price, 0));
+      if (p < 80.0) {
+        // Faixa 1: Até R$ 79,99
+        // Regra de baixo tíquete: se < R$ 9,00, a taxa fixa é metade do valor do produto
+        const fixedFee = p < 9.0 ? Math.min(4.50, p / 2) : 4.50;
+        return {
+          tierName: "Até R$ 79,99",
+          commissionPercent: 20.0,
+          fixedFee,
+          pixSubsidyPercent: 0,
+          minPrice: 0,
+          maxPrice: 79.99
+        };
+      } else if (p < 100.0) {
+        // Faixa 2: R$ 80,00 a R$ 99,99
+        return {
+          tierName: "R$ 80,00 a R$ 99,99",
+          commissionPercent: 14.0,
+          fixedFee: 16.0,
+          pixSubsidyPercent: 5,
+          minPrice: 80.0,
+          maxPrice: 99.99
+        };
+      } else if (p < 200.0) {
+        // Faixa 3: R$ 100,00 a R$ 199,99
+        return {
+          tierName: "R$ 100,00 a R$ 199,99",
+          commissionPercent: 14.0,
+          fixedFee: 20.0,
+          pixSubsidyPercent: 5,
+          minPrice: 100.0,
+          maxPrice: 199.99
+        };
+      } else if (p < 500.0) {
+        // Faixa 4: R$ 200,00 a R$ 499,99
+        return {
+          tierName: "R$ 200,00 a R$ 499,99",
+          commissionPercent: 14.0,
+          fixedFee: 26.0,
+          pixSubsidyPercent: 5,
+          minPrice: 200.0,
+          maxPrice: 499.99
+        };
+      } else {
+        // Faixa 5: A partir de R$ 500,00
+        return {
+          tierName: "A partir de R$ 500,00",
+          commissionPercent: 14.0,
+          fixedFee: 26.0,
+          pixSubsidyPercent: 8,
+          minPrice: 500.0,
+          maxPrice: Infinity
+        };
+      }
+    }
+
     static calculate(input) {
       const price = Math.max(0, asNumber(input.price, 0));
-      const commissionPercent = asNumber(input.commissionPercent, 20);
-      const fixedFee = asNumber(input.fixedFee, 4.0);
-      const maxCommission = asNumber(input.maxCommission, 105.0);
+      const autoTier = this.getFeeTier(price);
+
+      const useAutoTier = input.shopeeAutoTier !== false;
+      const commissionPercent = useAutoTier ? autoTier.commissionPercent : asNumber(input.commissionPercent, autoTier.commissionPercent);
+      const fixedFee = useAutoTier ? autoTier.fixedFee : asNumber(input.fixedFee, autoTier.fixedFee);
+
       const taxPercent = asNumber(input.taxPercent, 6.0);
       const adsPercent = asNumber(input.adsPercent, 0.0);
       const packagingCost = asNumber(input.packagingCost, 1.5);
@@ -188,10 +246,8 @@
       const sellerShippingContribution = Math.max(0, asNumber(input.sellerShippingContribution, 0));
       const additionalFees = Math.max(0, asNumber(input.additionalFees, 0));
 
-      // Comissão percentual com teto (cap) por item na Shopee
-      const uncappedCommission = price * (commissionPercent / 100);
-      const isCapped = maxCommission > 0 && uncappedCommission > maxCommission;
-      const commission = price > 0 ? (isCapped ? maxCommission : uncappedCommission) : 0;
+      // Sem teto de comissão (a comissão incide integralmente sobre o valor anunciado conforme Artigo 18483)
+      const commission = price > 0 ? price * (commissionPercent / 100) : 0;
       const itemFixedFee = price > 0 ? fixedFee : 0;
 
       // Repasse líquido da Shopee
@@ -211,12 +267,11 @@
 
       return {
         price,
+        tierName: autoTier.tierName,
         commissionPercent,
         commission,
-        uncappedCommission,
-        isCapped,
-        maxCommission,
         fixedFee: itemFixedFee,
+        pixSubsidyPercent: autoTier.pixSubsidyPercent,
         sellerShippingContribution,
         additionalFees,
         netPayout,
@@ -237,20 +292,53 @@
 
     static stepOpportunity(input) {
       const price = asNumber(input.price, 0);
-      const commissionPercent = asNumber(input.commissionPercent, 20);
-      const maxCommission = asNumber(input.maxCommission, 105);
-      if (!maxCommission || commissionPercent <= 0) return null;
+      if (price <= 0) return null;
 
-      // Threshold where commission reaches the cap
-      const capThreshold = maxCommission / (commissionPercent / 100);
-      if (price >= capThreshold * 0.75 && price < capThreshold) {
+      // Degrau 1: R$ 80,00 a R$ 87,77 (Armadilha tarifária da faixa R$ 80)
+      if (price >= 80.0 && price < 87.78) {
+        const netAt79 = 79.99 - (79.99 * 0.20) - 4.50; // R$ 59,49
+        const currentNet = price - (price * 0.14) - 16.00;
+        const loss = netAt79 - currentNet;
         return {
-          type: "cap_threshold",
-          capThreshold,
-          maxCommission,
-          message: `💡 <strong>Oportunidade Shopee:</strong> A partir de ${money.format(capThreshold)}, a comissão atinge o teto fixo de ${money.format(maxCommission)}. Acima desse valor, 100% de qualquer acréscimo de preço vai direto para o seu repasse.`
+          type: "tier_trap",
+          message: `⚠️ <strong>Atenção ao degrau tarifário Shopee:</strong> Ao vender a ${money.format(price)}, a taxa fixa sobe de R$ 4,50 para R$ 16,00. Você recebe <strong>${money.format(loss)} a MENOS</strong> por venda do que se anunciasse a R$ 79,99. Para empatar o repasse de R$ 79,99, anuncie a partir de <strong>R$ 87,78</strong>.`
         };
       }
+
+      // Degrau 2: R$ 100,00 a R$ 104,65
+      if (price >= 100.0 && price < 104.66) {
+        const netAt99 = 99.99 - (99.99 * 0.14) - 16.00; // R$ 69,99
+        const currentNet = price - (price * 0.14) - 20.00;
+        const loss = netAt99 - currentNet;
+        return {
+          type: "tier_trap",
+          message: `⚠️ <strong>Degrau de taxa fixa Shopee:</strong> A R$ 100,00 a taxa fixa sobe para R$ 20,00, gerando <strong>${money.format(loss)} a menos de repasse</strong> que a R$ 99,99. Anuncie a partir de <strong>R$ 104,66</strong> para recuperar a margem.`
+        };
+      }
+
+      // Degrau 3: R$ 200,00 a R$ 206,97
+      if (price >= 200.0 && price < 206.98) {
+        const netAt199 = 199.99 - (199.99 * 0.14) - 20.00; // R$ 151,99
+        const currentNet = price - (price * 0.14) - 26.00;
+        const loss = netAt199 - currentNet;
+        return {
+          type: "tier_trap",
+          message: `⚠️ <strong>Degrau de taxa fixa Shopee:</strong> A partir de R$ 200,00 a taxa fixa passa para R$ 26,00. Anunciar a partir de <strong>R$ 206,98</strong> equilibra seu repasse.`
+        };
+      }
+
+      // Subsídio Pix Shopee
+      const tier = this.getFeeTier(price);
+      if (tier.pixSubsidyPercent > 0) {
+        const pixDiscount = price * (tier.pixSubsidyPercent / 100);
+        const buyerPixPrice = price - pixDiscount;
+        const sellerNet = price - (price * (tier.commissionPercent / 100)) - tier.fixedFee;
+        return {
+          type: "pix_subsidy",
+          message: `💡 <strong>Subsídio Pix Shopee (${tier.pixSubsidyPercent}%):</strong> O comprador pode pagar ${money.format(buyerPixPrice)} no Pix com desconto subsidiado pela Shopee, e você continua recebendo seu repasse integral de ${money.format(sellerNet)}.`
+        };
+      }
+
       return null;
     }
   }
@@ -772,9 +860,9 @@
     input(data, overrides = {}) {
       return {
         price: data.price,
+        shopeeAutoTier: this.settings.shopeeAutoTier ?? true,
         commissionPercent: this.settings.shopeeCommissionPercent,
         fixedFee: this.settings.shopeeFixedFee,
-        maxCommission: this.settings.shopeeMaxCommission,
         taxPercent: this.settings.shopeeTaxPercent,
         adsPercent: this.settings.shopeeAdsPercent,
         packagingCost: this.settings.shopeePackagingCost,
@@ -1137,16 +1225,17 @@
             </div>
             <strong class="cl-shopee-payout-banner__value">${money.format(calc.netPayout)}</strong>
           </div>
-          <small class="cl-shopee-payout-banner__note">Após comissão (${number.format(calc.commissionPercent)}%${calc.isCapped ? " · Teto R$ 105 atingido" : ""}) e taxa fixa (${money.format(calc.fixedFee)}).</small>
+          <small class="cl-shopee-payout-banner__note">Após comissão (${number.format(calc.commissionPercent)}% · Faixa ${escapeHtml(calc.tierName)}) e taxa fixa (${money.format(calc.fixedFee)}).</small>
         </div>
 
         <div class="cl-shopee-badges">
           <span class="cl-shopee-badge cl-shopee-badge--orange">
-            🏷️ Comissão ${number.format(calc.commissionPercent)}%${calc.isCapped ? " (Teto R$ 105)" : ""}
+            🏷️ Comissão ${number.format(calc.commissionPercent)}% (${escapeHtml(calc.tierName)})
           </span>
           <span class="cl-shopee-badge cl-shopee-badge--gray">
             📦 Taxa Fixa ${money.format(calc.fixedFee)}
           </span>
+          ${calc.pixSubsidyPercent > 0 ? `<span class="cl-shopee-badge cl-shopee-badge--orange">⚡ Subsídio Pix ${calc.pixSubsidyPercent}%</span>` : ""}
           ${isOfficial ? `<span class="cl-shopee-badge cl-shopee-badge--red">✨ Loja Oficial</span>` : ""}
           ${shopLoc ? `<span class="cl-shopee-badge">📍 ${escapeHtml(shopLoc)}</span>` : ""}
           ${data.discountText ? `<span class="cl-shopee-badge cl-shopee-badge--orange">🔥 ${escapeHtml(data.discountText)}</span>` : ""}
@@ -1194,8 +1283,8 @@
 
           <div class="cl-shopee-row">
             <div class="cl-shopee-item__col">
-              <dt>Comissão Shopee — estimada</dt>
-              <span class="cl-shopee-subtext">${number.format(calc.commissionPercent)}% ${calc.isCapped ? "(Teto atingido: R$ 105,00)" : "sobre a venda"}</span>
+              <dt>Comissão Shopee (${number.format(calc.commissionPercent)}%)</dt>
+              <span class="cl-shopee-subtext">Faixa ${escapeHtml(calc.tierName)} (Sem teto máximo)</span>
             </div>
             <dd class="cl-shopee-negative">− ${money.format(calc.commission)}</dd>
           </div>
@@ -1203,7 +1292,7 @@
           <div class="cl-shopee-row">
             <div class="cl-shopee-item__col">
               <dt>Tarifa fixa por item</dt>
-              <span class="cl-shopee-subtext">Taxa de transação Shopee Brasil</span>
+              <span class="cl-shopee-subtext">Taxa oficial por faixa (Art. 18483)</span>
             </div>
             <dd class="cl-shopee-negative">− ${money.format(calc.fixedFee)}</dd>
           </div>

@@ -8,9 +8,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   defaultWeight: 1000,
   considerSubsidy: true,
   // Shopee
+  shopeeAutoTier: true,
   shopeeCommissionPercent: 20,
-  shopeeFixedFee: 4.0,
-  shopeeMaxCommission: 105.0,
+  shopeeFixedFee: 4.5,
   shopeeTaxPercent: 6.0,
   shopeePackagingCost: 1.5,
   shopeeAdsPercent: 0.0
@@ -77,9 +77,9 @@ form.addEventListener("submit", async (event) => {
     premiumCommission: Number(form.premiumCommission?.value ?? 17),
     considerSubsidy: Boolean(form.considerSubsidy?.checked),
     // Shopee
-    shopeeCommissionPercent: Number(form.shopeeCommissionPercent?.value ?? 20),
-    shopeeFixedFee: Number(form.shopeeFixedFee?.value ?? 4.0),
-    shopeeMaxCommission: Number(form.shopeeMaxCommission?.value ?? 105.0),
+    shopeeAutoTier: Boolean(form.shopeeAutoTier?.checked),
+    shopeeCommissionPercent: Number(form.shopeeCommissionPercent?.value || 20),
+    shopeeFixedFee: Number(form.shopeeFixedFee?.value || 4.5),
     shopeeTaxPercent: Number(form.shopeeTaxPercent?.value ?? 6.0),
     shopeePackagingCost: Number(form.shopeePackagingCost?.value ?? 1.5),
     shopeeAdsPercent: Number(form.shopeeAdsPercent?.value ?? 0.0)

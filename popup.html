@@ -55,12 +55,12 @@
         </div>
 
         <div id="tab-shopee" class="tab-pane">
-          <label>Comissão Shopee (%)<input id="shopeeCommissionPercent" name="shopeeCommissionPercent" type="number" min="0" max="100" step="0.1" required></label>
-          <label>Tarifa fixa / item (R$)<input id="shopeeFixedFee" name="shopeeFixedFee" type="number" min="0" step="0.01" required></label>
-          <label>Teto comissão (R$)<input id="shopeeMaxCommission" name="shopeeMaxCommission" type="number" min="0" step="0.01" required></label>
+          <label class="toggle full" for="shopeeAutoTier"><span>Tabela oficial Shopee (Art. 18483 por faixas)</span><input id="shopeeAutoTier" name="shopeeAutoTier" type="checkbox"></label>
           <label>Imposto padrão (%)<input id="shopeeTaxPercent" name="shopeeTaxPercent" type="number" min="0" max="100" step="0.1" required></label>
           <label>Embalagem (R$)<input id="shopeePackagingCost" name="shopeePackagingCost" type="number" min="0" step="0.01" required></label>
           <label>Shopee Ads (%)<input id="shopeeAdsPercent" name="shopeeAdsPercent" type="number" min="0" max="100" step="0.1" required></label>
+          <label>Tarifa fixa manual (R$)<input id="shopeeFixedFee" name="shopeeFixedFee" type="number" min="0" step="0.01" placeholder="Automático"></label>
+          <label>Comissão manual (%)<input id="shopeeCommissionPercent" name="shopeeCommissionPercent" type="number" min="0" max="100" step="0.1" placeholder="Automático"></label>
         </div>
 
         <button type="submit" id="submit-btn">Salvar configurações</button>
