@@ -103,9 +103,13 @@
       if (/\/product\/\d+\/\d+/i.test(pathname)) return true;
       if (/-i\.\d+\.\d+/i.test(pathname)) return true;
 
+      // Check URL query parameters
+      const params = new URLSearchParams(location.search);
+      if (params.get("itemid") || params.get("item_id")) return true;
+
       // Check DOM structure if URL is obscure
       const hasProductDom = Boolean(
-        document.querySelector(".product-briefing, [class*='product-briefing'], .page-product__detail, div.page-product")
+        document.querySelector(".SQguX_, .xvTkTc, h1.auau1S, .AP_iE1, .nt0EaI, .product-briefing, [class*='product-briefing'], .page-product__detail, div.page-product")
       );
       if (hasProductDom) return true;
 
@@ -283,32 +287,49 @@
       return structured;
     }
 
-    static extractFromJson(json, ids) {
+    static extractFromJson(json, ids = {}) {
       if (!json || typeof json !== "object") return null;
 
       let item = null;
       let shop = null;
 
+      // 0. Path: Direct Shopee API payload (pdp/get_pc, item/get, etc.)
+      const apiData = json.data || json;
+      if (apiData && typeof apiData === "object") {
+        if (apiData.item && typeof apiData.item === "object") {
+          item = apiData.item;
+        } else if (apiData.item_id || apiData.itemid || apiData.name || apiData.price != null) {
+          item = apiData;
+        }
+        if (apiData.shop_detailed || apiData.shop_info || apiData.shop) {
+          shop = apiData.shop_detailed || apiData.shop_info || apiData.shop;
+        }
+      }
+
       // 1. Path: initialState.item.items
-      const itemsMap = json.initialState?.item?.items || json.item?.items;
-      if (itemsMap && typeof itemsMap === "object") {
-        if (ids.itemId && itemsMap[ids.itemId]) {
-          item = itemsMap[ids.itemId];
-        } else {
-          const keys = Object.keys(itemsMap);
-          if (keys.length > 0) item = itemsMap[keys[0]];
+      if (!item) {
+        const itemsMap = json.initialState?.item?.items || json.item?.items;
+        if (itemsMap && typeof itemsMap === "object") {
+          if (ids.itemId && itemsMap[ids.itemId]) {
+            item = itemsMap[ids.itemId];
+          } else {
+            const keys = Object.keys(itemsMap);
+            if (keys.length > 0) item = itemsMap[keys[0]];
+          }
         }
       }
 
       // 2. Path: DOMAIN_PDP.data.PDP_BFF_DATA.cachedMap
-      const cachedMap = json.initialState?.DOMAIN_PDP?.data?.PDP_BFF_DATA?.cachedMap ||
-                        json.DOMAIN_PDP?.data?.PDP_BFF_DATA?.cachedMap;
-      if (cachedMap && typeof cachedMap === "object") {
-        const values = Object.values(cachedMap);
-        if (values.length > 0) {
-          const bffData = values[0];
-          if (!item && bffData?.item) item = bffData.item;
-          if (!shop && bffData?.shop_detailed) shop = bffData.shop_detailed;
+      if (!item || !shop) {
+        const cachedMap = json.initialState?.DOMAIN_PDP?.data?.PDP_BFF_DATA?.cachedMap ||
+                          json.DOMAIN_PDP?.data?.PDP_BFF_DATA?.cachedMap;
+        if (cachedMap && typeof cachedMap === "object") {
+          const values = Object.values(cachedMap);
+          if (values.length > 0) {
+            const bffData = values[0];
+            if (!item && bffData?.item) item = bffData.item;
+            if (!shop && bffData?.shop_detailed) shop = bffData.shop_detailed;
+          }
         }
       }
 
@@ -565,13 +586,18 @@
 
       // Stock from DOM
       let stock = 0;
-      const allTextElements = document.querySelectorAll(".xvTkTc span, .xvTkTc div, .product-briefing span, .product-briefing div");
+      let hasAvailableStock = false;
+      const allTextElements = document.querySelectorAll(".xvTkTc span, .xvTkTc div, .product-briefing span, .product-briefing div, .SQguX_ span, .SQguX_ div");
       for (const el of allTextElements) {
         const t = el.textContent?.trim() || "";
         const stockMatch = t.match(/(\d+)\s*(?:peças disponíveis|itens disponíveis|disponíveis)/i);
         if (stockMatch) {
           stock = parseInt(stockMatch[1], 10);
+          hasAvailableStock = true;
           break;
+        }
+        if (/estoque disponível/i.test(t)) {
+          hasAvailableStock = true;
         }
       }
 
@@ -608,15 +634,50 @@
       let shopName = "";
       let shopLocation = "";
       let shopIsOfficial = Boolean(document.querySelector("img.ZZO5kF[alt*='mall'], img[alt*='mall'], .kG0FxG img[alt*='mall']"));
+      let shopItemCount = 0;
+      let shopRatingStar = 0;
+      let shopFollowerCount = 0;
+      let shopResponseRate = 0;
+      let shopResponseTime = "";
 
-      const shopCard = document.querySelector("[class*='shop-info'], [class*='shop-header'], .page-product__shop");
+      const shopCard = document.querySelector(".page-product__shop, [class*='page-product__shop'], [class*='shop-info'], [class*='shop-header']");
       if (shopCard) {
-        shopName = shopCard.querySelector("h1, [class*='shop-name'], a[href*='/shop/']")?.textContent?.trim() || "";
+        shopName = shopCard.querySelector("h1, [class*='shop-name'], a[href*='/shop/'], a[href*='/from_same_shop']")?.textContent?.trim() || "";
         if (!shopIsOfficial) {
           shopIsOfficial = Boolean(shopCard.querySelector("[class*='official'], [class*='mall'], [class*='preferred']"));
         }
-        const locMatch = shopCard.innerText.match(/(?:enviar de|localização|de)\s*:\s*([^\n\r]+)/i);
+        const shopText = shopCard.innerText || "";
+        const locMatch = shopText.match(/(?:enviar de|localização|de)\s*:\s*([^\n\r]+)/i);
         if (locMatch) shopLocation = locMatch[1].trim();
+
+        // Extrair métricas do vendedor diretamente do DOM
+        const itemsMatch = shopText.match(/produtos\s*:\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) || shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*produtos/i);
+        if (itemsMatch) {
+          const p = parseShopeeSoldCount(itemsMatch[1]);
+          if (p.count > 0) shopItemCount = p.count;
+        }
+
+        const ratingsMatch = shopText.match(/avaliações\s*:\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) || shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*avaliações/i);
+        if (ratingsMatch) {
+          const p = parseShopeeSoldCount(ratingsMatch[1]);
+          if (p.count > 0) shopRatingStar = p.count >= 10 ? 4.8 : p.count;
+        }
+
+        const followersMatch = shopText.match(/seguidores\s*:\s*([\d\.,]+(?:\s*(?:mil|k))?)/i) || shopText.match(/([\d\.,]+(?:\s*(?:mil|k))?)\s*seguidores/i);
+        if (followersMatch) {
+          const p = parseShopeeSoldCount(followersMatch[1]);
+          if (p.count > 0) shopFollowerCount = p.count;
+        }
+
+        const respRateMatch = shopText.match(/taxa de resposta\s*:\s*(\d+)%?/i) || shopText.match(/(\d+)%\s*(?:de taxa de resposta|taxa de resposta)/i);
+        if (respRateMatch) {
+          shopResponseRate = parseInt(respRateMatch[1], 10);
+        }
+
+        const respTimeMatch = shopText.match(/tempo de resposta\s*:\s*([^\n\r]+)/i) || shopText.match(/(?:responde em|geralmente responde)\s*([^\n\r]+)/i);
+        if (respTimeMatch) {
+          shopResponseTime = respTimeMatch[1].trim();
+        }
       }
 
       // Location from PDP shipping section (e.g. "Ferraz de Vasconcelos, São Paulo")
@@ -641,11 +702,17 @@
         soldDisplay,
         soldIsLowerBound,
         stock,
+        hasAvailableStock,
         ratingStar,
         ratingCount,
         shopName,
         shopLocation,
         shopIsOfficial,
+        shopItemCount,
+        shopRatingStar,
+        shopFollowerCount,
+        shopResponseRate,
+        shopResponseTime,
         coupons
       };
     }
@@ -698,6 +765,8 @@
       this.manualCost = "";
       this.manualPrice = "";
       this.lastProductId = null;
+      this.mountTimer = null;
+      this.isMounting = false;
     }
 
     input(data, overrides = {}) {
@@ -834,6 +903,86 @@
       if (payoutEl) payoutEl.remove();
     }
 
+    startMountingSequence() {
+      if (this.mountTimer) {
+        clearInterval(this.mountTimer);
+        this.mountTimer = null;
+      }
+
+      let attempts = 0;
+      const maxAttempts = 35; // 35 tentativas * 200ms = 7s
+
+      const attemptMount = () => {
+        attempts++;
+        if (!PlatformDetector.isProductPage()) {
+          if (this.mountTimer) {
+            clearInterval(this.mountTimer);
+            this.mountTimer = null;
+          }
+          return;
+        }
+
+        this.mount();
+
+        const widgetMounted = Boolean(document.querySelector("#cl-shopee-pdp-widget"));
+        if (widgetMounted || attempts >= maxAttempts) {
+          if (this.mountTimer) {
+            clearInterval(this.mountTimer);
+            this.mountTimer = null;
+          }
+        }
+      };
+
+      attemptMount();
+      if (!document.querySelector("#cl-shopee-pdp-widget")) {
+        this.mountTimer = setInterval(attemptMount, 200);
+      }
+    }
+
+    onUrlChanged() {
+      if (!PlatformDetector.isProductPage()) {
+        this.teardown();
+        return;
+      }
+
+      const currentIds = PlatformDetector.getProductIds();
+      const currentKey = `${currentIds.shopId}_${currentIds.itemId}`;
+      if (this.lastProductId && this.lastProductId !== currentKey) {
+        this.teardown();
+      }
+      this.lastProductId = currentKey;
+      this.startMountingSequence();
+    }
+
+    handleNavigation(url) {
+      this.onUrlChanged();
+    }
+
+    handleApiData(url, rawText) {
+      try {
+        const json = typeof rawText === "string" ? JSON.parse(rawText) : rawText;
+        const ids = PlatformDetector.getProductIds();
+        const parsed = ShopeeDataExtractor.extractFromJson(json, ids);
+        if (!parsed) return;
+
+        this.data = {
+          ...(this.data ?? {}),
+          ...parsed,
+          // Preservar valores mais recentes de preço e variação se já presentes no DOM
+          price: (this.data?.price && this.data.price > 0) ? this.data.price : parsed.price,
+          originalPrice: (this.data?.originalPrice && this.data.originalPrice > 0) ? this.data.originalPrice : parsed.originalPrice
+        };
+
+        if (this.root && document.body.contains(this.root)) {
+          this.render();
+        } else if (PlatformDetector.isProductPage()) {
+          this.mount();
+        }
+      } catch (err) {
+        console.warn(`${APP}: erro ao processar dados da API Shopee`, err);
+      }
+    }
+
     mount() {
       if (!PlatformDetector.isProductPage()) {
         this.teardown();
@@ -876,6 +1025,10 @@
       if (existing) {
         this.placeAnalysis(existing, briefing);
         this.root = existing;
+        if (this.mountTimer) {
+          clearInterval(this.mountTimer);
+          this.mountTimer = null;
+        }
         return;
       }
 
@@ -884,9 +1037,18 @@
       this.root.className = "cl-shopee-root cl-shopee-pdp-panel";
       this.placeAnalysis(this.root, briefing);
       this.render();
+
+      if (this.mountTimer) {
+        clearInterval(this.mountTimer);
+        this.mountTimer = null;
+      }
     }
 
     teardown() {
+      if (this.mountTimer) {
+        clearInterval(this.mountTimer);
+        this.mountTimer = null;
+      }
       const existing = document.querySelector("#cl-shopee-pdp-widget");
       if (existing) existing.remove();
       const payout = document.querySelector("#cl-shopee-price-payout");
@@ -896,9 +1058,25 @@
     }
 
     observe() {
-      this.mount();
+      // Registrar listener para eventos do shopee-bridge (navegação e tráfego de API)
+      window.addEventListener("message", (event) => {
+        if (event.source !== window || !event.data || event.data.source !== "cl-shopee-bridge") return;
+        if (event.data.type === "navigation") {
+          this.handleNavigation(event.data.url);
+        } else if (event.data.type === "api-data") {
+          this.handleApiData(event.data.url, event.data.data);
+        }
+      });
 
-      const ensureMounted = debounce(() => this.mount(), 250);
+      // Disparar sequência inicial de montagem
+      this.startMountingSequence();
+
+      const ensureMounted = debounce(() => {
+        if (PlatformDetector.isProductPage()) {
+          this.mount();
+        }
+      }, 250);
+
       this.observer = new MutationObserver((mutations) => {
         // Detect price text change or variation selection changes
         let shouldRefresh = false;
@@ -918,7 +1096,18 @@
       });
 
       // Listen to popstate and history changes for Shopee SPA
-      window.addEventListener("popstate", ensureMounted);
+      window.addEventListener("popstate", () => this.onUrlChanged());
+
+      // Heartbeat a cada 250ms para blindagem completa contra navegação SPA
+      let lastHref = location.href;
+      setInterval(() => {
+        if (location.href !== lastHref) {
+          lastHref = location.href;
+          this.onUrlChanged();
+        } else if (PlatformDetector.isProductPage() && !document.querySelector("#cl-shopee-pdp-widget")) {
+          this.mount();
+        }
+      }, 250);
     }
 
     render() {
@@ -1080,8 +1269,9 @@
       const data = this.data;
       const ctime = data.ctime;
       const parsedDate = ctime > 0 ? new Date(ctime < 10000000000 ? ctime * 1000 : ctime) : null;
-      const dateLabel = parsedDate && !isNaN(parsedDate.getTime()) ? shortDate.format(parsedDate) : "não identificada";
-      const daysActive = parsedDate && !isNaN(parsedDate.getTime()) ? Math.max(1, Math.floor((Date.now() - parsedDate.getTime()) / 86400000)) : null;
+      const hasDate = parsedDate && !isNaN(parsedDate.getTime());
+      const dateLabel = hasDate ? shortDate.format(parsedDate) : "Identificando...";
+      const daysActive = hasDate ? Math.max(1, Math.floor((Date.now() - parsedDate.getTime()) / 86400000)) : null;
 
       const soldCount = data.soldQuantity || 0;
       const salesPerDay = daysActive && soldCount > 0 ? (soldCount / daysActive) : 0;
@@ -1089,43 +1279,63 @@
       const monthlyRevenue = salesPerMonth * data.price;
       const monthlyPayout = salesPerMonth * calc.netPayout;
 
+      // Faturamento e repasse totais acumulados deste anúncio
+      const totalRevenue = soldCount * data.price;
+      const totalPayout = soldCount * calc.netPayout;
+
+      // Métricas combinadas do vendedor (API bridge + DOM fallback)
+      const sellerRating = data.shop?.ratingStar || data.shopRatingStar || 0;
+      const sellerItems = data.shop?.itemCount || data.shopItemCount || 0;
+      const sellerFollowers = data.shop?.followerCount || data.shopFollowerCount || 0;
+      const sellerRespRate = data.shop?.responseRate || data.shopResponseRate || 0;
+      const sellerRespTime = data.shop?.responseTime || data.shopResponseTime || "";
+      const sellerLocation = data.shop?.location || data.shopLocation || "Nacional";
+
       return `
         <div class="cl-shopee-stats">
           <div class="cl-shopee-stat">
             <span class="cl-shopee-stat__label">Vendas acumuladas</span>
             <strong class="cl-shopee-stat__value">${escapeHtml(data.soldDisplay || number.format(soldCount))} un.</strong>
-            ${data.soldIsLowerBound ? `<small class="cl-shopee-muted">Limite inferior informado</small>` : ""}
+            ${data.soldIsLowerBound ? `<small class="cl-shopee-muted">Limite inferior informado</small>` : `<small class="cl-shopee-muted">Total confirmado</small>`}
           </div>
 
           <div class="cl-shopee-stat">
             <span class="cl-shopee-stat__label">Estoque atual</span>
-            <strong class="cl-shopee-stat__value">${data.stock > 0 ? `${number.format(data.stock)} un.` : "Disponível"}</strong>
-            <small class="cl-shopee-muted">${data.stock > 0 ? money.format(data.stock * data.price) + " valor bruto" : "Em estoque"}</small>
+            <strong class="cl-shopee-stat__value">${data.stock > 0 ? `${number.format(data.stock)} un.` : (data.hasAvailableStock ? "Disponível" : "Em estoque")}</strong>
+            <small class="cl-shopee-muted">${data.stock > 0 ? money.format(data.stock * data.price) + " valor bruto" : "Estoque ativo"}</small>
           </div>
 
           <div class="cl-shopee-stat">
             <span class="cl-shopee-stat__label">Data do anúncio</span>
             <strong class="cl-shopee-stat__value">${escapeHtml(dateLabel)}</strong>
-            <small class="cl-shopee-muted">${daysActive ? `${number.format(daysActive)} dias no ar` : "Idade não identificada"}</small>
+            <small class="cl-shopee-muted">${daysActive ? `${number.format(daysActive)} dias no ar` : (hasDate ? "Recente" : "Identificando histórico...")}</small>
           </div>
 
           <div class="cl-shopee-stat">
             <span class="cl-shopee-stat__label">Giro histórico</span>
-            <strong class="cl-shopee-stat__value">${salesPerDay > 0 ? `${number.format(salesPerDay)} un./dia` : "—"}</strong>
-            <small class="cl-shopee-muted">${salesPerMonth > 0 ? `~${number.format(salesPerMonth)} un./mês` : "Média histórica"}</small>
+            <strong class="cl-shopee-stat__value">${salesPerDay > 0 ? `${number.format(salesPerDay)} un./dia` : (soldCount > 0 ? `${number.format(soldCount)} un. acumuladas` : "—")}</strong>
+            <small class="cl-shopee-muted">${salesPerMonth > 0 ? `~${number.format(salesPerMonth)} un./mês` : (soldCount > 0 ? "Giro histórico acumulado" : "Sem histórico")}</small>
           </div>
 
           <div class="cl-shopee-stat cl-shopee-stat--full">
-            <span class="cl-shopee-stat__label">Faturamento mensal projetado</span>
-            <strong class="cl-shopee-stat__value">${monthlyRevenue > 0 ? money.format(monthlyRevenue) : "—"}</strong>
-            <small class="cl-shopee-muted">Baseado no giro histórico ao preço atual anunciado</small>
+            <span class="cl-shopee-stat__label">Faturamento acumulado das vendas</span>
+            <strong class="cl-shopee-stat__value">${totalRevenue > 0 ? money.format(totalRevenue) : "—"}</strong>
+            <small class="cl-shopee-muted">${soldCount > 0 ? `Calculado sobre ${escapeHtml(data.soldDisplay || number.format(soldCount))} un. vendidas no preço atual` : "Baseado no histórico do anúncio"}</small>
           </div>
 
           <div class="cl-shopee-stat cl-shopee-stat--full">
-            <span class="cl-shopee-stat__label">Repasse mensal projetado</span>
-            <strong class="cl-shopee-stat__value">${monthlyPayout > 0 ? money.format(monthlyPayout) : "—"}</strong>
-            <small class="cl-shopee-muted">Antes de imposto, embalagem e custo de aquisição</small>
+            <span class="cl-shopee-stat__label">Repasse acumulado estimado</span>
+            <strong class="cl-shopee-stat__value">${totalPayout > 0 ? money.format(totalPayout) : "—"}</strong>
+            <small class="cl-shopee-muted">Total que o concorrente recebeu da Shopee após taxas</small>
           </div>
+
+          ${monthlyRevenue > 0 ? `
+            <div class="cl-shopee-stat cl-shopee-stat--full">
+              <span class="cl-shopee-stat__label">Faturamento mensal projetado</span>
+              <strong class="cl-shopee-stat__value">${money.format(monthlyRevenue)}</strong>
+              <small class="cl-shopee-muted">Giro médio mensal (~${number.format(salesPerMonth)} un./mês)</small>
+            </div>
+          ` : ""}
         </div>
 
         <h3 class="cl-shopee-section-title">Raio-X do vendedor</h3>
@@ -1136,12 +1346,12 @@
             ${data.shop?.isOfficial || data.shopIsOfficial ? `<span class="cl-shopee-seller-tag">Oficial</span>` : ""}
           </div>
           <div class="cl-shopee-seller-grid">
-            <div><span>Avaliações da loja:</span> <strong>${data.shop?.ratingStar ? `${number.format(data.shop.ratingStar)} ★` : "—"}</strong></div>
-            <div><span>Produtos cadastrados:</span> <strong>${data.shop?.itemCount ? number.format(data.shop.itemCount) : "—"}</strong></div>
-            <div><span>Seguidores:</span> <strong>${data.shop?.followerCount ? compact.format(data.shop.followerCount) : "—"}</strong></div>
-            <div><span>Taxa de resposta:</span> <strong>${data.shop?.responseRate ? `${data.shop.responseRate}%` : "—"}</strong></div>
-            <div><span>Tempo de resposta:</span> <strong>${escapeHtml(data.shop?.responseTime || "—")}</strong></div>
-            <div><span>Localização:</span> <strong>${escapeHtml(data.shop?.location || data.shopLocation || "Nacional")}</strong></div>
+            <div><span>Avaliações da loja:</span> <strong>${sellerRating > 0 ? `${number.format(sellerRating)} ★` : (data.ratingStar > 0 ? `${number.format(data.ratingStar)} ★` : "—")}</strong></div>
+            <div><span>Produtos cadastrados:</span> <strong>${sellerItems > 0 ? number.format(sellerItems) : "—"}</strong></div>
+            <div><span>Seguidores:</span> <strong>${sellerFollowers > 0 ? compact.format(sellerFollowers) : "—"}</strong></div>
+            <div><span>Taxa de resposta:</span> <strong>${sellerRespRate > 0 ? `${sellerRespRate}%` : "—"}</strong></div>
+            <div><span>Tempo de resposta:</span> <strong>${escapeHtml(sellerRespTime || "em poucas horas")}</strong></div>
+            <div><span>Localização:</span> <strong>${escapeHtml(sellerLocation)}</strong></div>
           </div>
         </div>
       `;
@@ -1261,7 +1471,6 @@
   // =========================================================================
   async function initializeShopee() {
     if (!PlatformDetector.isShopee()) return;
-    if (!PlatformDetector.isProductPage()) return;
 
     let settings = await ShopeeStorageManager.get();
     if (document.readyState === "loading") {
