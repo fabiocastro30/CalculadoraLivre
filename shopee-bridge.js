@@ -45,7 +45,7 @@
   };
 
   const isPdpOrItemApi = (urlStr) => {
-    return /api\/v4\/(?:pdp\/get_pc|item\/get|product\/get_shop_info|shop\/get_shop_detail|item\/get_ratings)/i.test(urlStr) ||
+    return /api\/v[24]\/(?:pdp\/get_pc|pdp\/get|item\/get|product\/get_shop_info|shop\/get_shop_detail|item\/get_ratings)/i.test(urlStr) ||
            /(?:item_id|itemid|shop_id|shopid)/i.test(urlStr);
   };
 
@@ -108,6 +108,40 @@
       }
     }
   }
+
+  // 4. Reactive fetch requester: permite que o content script solicite endpoints autenticados
+  // aproveitando cookies de sessão e headers nativos do browser sem bloqueio anti-bot
+  window.addEventListener("message", async (event) => {
+    if (event.source !== window || !event.data || event.data.source !== "cl-shopee-cs") return;
+    if (event.data.type === "request-pdp") {
+      const { shopId, itemId } = event.data;
+      if (!shopId || !itemId) return;
+      try {
+        const endpoints = [
+          `/api/v4/pdp/get_pc?shop_id=${shopId}&item_id=${itemId}`,
+          `/api/v4/item/get?itemid=${itemId}&shopid=${shopId}`,
+          `/api/v2/item/get_ratings?itemid=${itemId}&shopid=${shopId}&offset=0&limit=5&type=0`
+        ];
+        for (const ep of endpoints) {
+          try {
+            const resp = await fetch(ep, { credentials: "include" });
+            if (resp.ok) {
+              const text = await resp.text();
+              if (text && text.length <= MAX_PAYLOAD_LENGTH) {
+                postBridgeMessage("api-data", { url: ep, text });
+                // Se obteve dados com ctime, não precisa chamar os demais
+                if (text.includes('"ctime"')) break;
+              }
+            }
+          } catch {
+            // Continua para o próximo endpoint
+          }
+        }
+      } catch {
+        // Safe fallback
+      }
+    }
+  });
 
   scanEmbeddedScripts();
   document.addEventListener("DOMContentLoaded", scanEmbeddedScripts, { once: true });

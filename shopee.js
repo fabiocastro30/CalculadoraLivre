@@ -465,19 +465,29 @@
         price: normalizeShopeePrice(w.price)
       })) : [];
 
-      // Rating
-      const ratingInfo = item.item_rating || {};
-      const ratingStar = Number(ratingInfo.rating_star || item.rating_star || 0);
-      const ratingCount = Number(ratingInfo.total_rating_count || item.total_rating_count || 0);
-      const commentCount = Number(ratingInfo.cmt_count || 0);
-      const likedCount = Number(item.liked_count || 0);
+      let ratingInfo = item.item_rating || {};
+      let ratingStar = Number(ratingInfo.rating_star || item.rating_star || 0);
+      let ratingCount = Number(ratingInfo.total_rating_count || item.total_rating_count || 0);
+      let commentCount = Number(ratingInfo.cmt_count || 0);
+      let likedCount = Number(item.liked_count || 0);
+
+      // Ctime (data de criação do anúncio - aceita ctime em item ou na raiz ou em data)
+      let ctime = Number(item.ctime || apiData.ctime || json.ctime || 0);
+
+      // Path especial: ratings endpoint (/api/v2/item/get_ratings ou /api/v4/item/get_ratings)
+      if (apiData.ratings && Array.isArray(apiData.ratings) && apiData.ratings.length > 0) {
+        if (!ctime || ctime === 0) {
+          // O ctime das primeiras avaliações reflete a atividade histórica do anúncio
+          const reviewCtimes = apiData.ratings.map(r => Number(r.ctime || 0)).filter(t => t > 0);
+          if (reviewCtimes.length > 0) {
+            ctime = Math.min(...reviewCtimes);
+          }
+        }
+      }
 
       // Attributes & Description
       const attributes = Array.isArray(item.attributes) ? item.attributes : [];
       const description = String(item.description || "");
-
-      // Ctime
-      const ctime = Number(item.ctime || 0);
 
       // Shop detailed
       const shopInfo = shop ? {
@@ -1048,6 +1058,20 @@
       if (payoutEl) payoutEl.remove();
     }
 
+    requestPdpData(shopId, itemId) {
+      if (!shopId || !itemId) return;
+      try {
+        window.postMessage({
+          source: "cl-shopee-cs",
+          type: "request-pdp",
+          shopId,
+          itemId
+        }, location.origin);
+      } catch {
+        // Safe fallback
+      }
+    }
+
     startMountingSequence() {
       if (this.mountTimer) {
         clearInterval(this.mountTimer);
@@ -1096,6 +1120,9 @@
         this.teardown();
       }
       this.lastProductId = currentKey;
+      if (currentIds.shopId && currentIds.itemId) {
+        this.requestPdpData(currentIds.shopId, currentIds.itemId);
+      }
       this.startMountingSequence();
     }
 
@@ -1122,6 +1149,7 @@
           ratingCount: (parsed.ratingCount && parsed.ratingCount > 0) ? parsed.ratingCount : (current.ratingCount || 0),
           likedCount: (parsed.likedCount && parsed.likedCount > 0) ? parsed.likedCount : (current.likedCount || 0),
           stock: (parsed.stock && parsed.stock > 0) ? parsed.stock : (current.stock || 0),
+          ctime: (parsed.ctime && parsed.ctime > 0) ? parsed.ctime : (current.ctime || 0),
           shopName: parsed.shop?.name || current.shopName || current.shop?.name || "",
           shopIsOfficial: parsed.shop?.isOfficial != null ? parsed.shop.isOfficial : current.shopIsOfficial
         };
@@ -1166,6 +1194,7 @@
         ratingCount: (domData.ratingCount > 0 ? domData.ratingCount : (structured?.ratingCount || currentData.ratingCount || 0)),
         likedCount: (domData.likedCount > 0 ? domData.likedCount : (structured?.likedCount || currentData.likedCount || 0)),
         stock: (domData.stock > 0 ? domData.stock : (structured?.stock || currentData.stock || 0)),
+        ctime: (structured?.ctime > 0 ? structured.ctime : (currentData.ctime || 0)),
         hasAvailableStock: domData.hasAvailableStock || currentData.hasAvailableStock || false,
         shopName: domData.shopName || structured?.shop?.name || currentData.shopName || currentData.shop?.name || "",
         shopLocation: domData.shopLocation || structured?.shop?.location || currentData.shopLocation || currentData.shop?.location || "",
@@ -1197,6 +1226,9 @@
       if (existing) {
         this.placeAnalysis(existing, briefing);
         this.root = existing;
+        if (!this.data?.ctime && currentIds.shopId && currentIds.itemId) {
+          this.requestPdpData(currentIds.shopId, currentIds.itemId);
+        }
         if (this.mountTimer) {
           clearInterval(this.mountTimer);
           this.mountTimer = null;
@@ -1209,6 +1241,10 @@
       this.root.className = "cl-shopee-root cl-shopee-pdp-panel";
       this.placeAnalysis(this.root, briefing);
       this.render();
+
+      if (!this.data?.ctime && currentIds.shopId && currentIds.itemId) {
+        this.requestPdpData(currentIds.shopId, currentIds.itemId);
+      }
 
       if (this.mountTimer) {
         clearInterval(this.mountTimer);
